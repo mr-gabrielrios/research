@@ -1,0 +1,10 @@
+*.doc*
+*.csv
+*.xls*
+*.nc
+*.h*
+*.DS_Store*
+*ipynb_checkpoint*
+*.lock*
+*.out*
+
