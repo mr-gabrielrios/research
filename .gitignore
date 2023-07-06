@@ -7,4 +7,6 @@
 *ipynb_checkpoint*
 *.lock*
 *.out*
-
+*.o
+*.mod
+*CM2.5.x
