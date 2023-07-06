@@ -1,0 +1,4 @@
+*.o
+*.mod
+nfu_compress_mod.mod
+nfu_mod.mod

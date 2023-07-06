@@ -1,0 +1,6 @@
+*
+!.gitignore
+!*.mk
+!*.csh
+!*.sh
+!mkmf
