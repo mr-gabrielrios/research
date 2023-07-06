@@ -54,6 +54,9 @@ use atmosphere_mod,     only: surf_diff_type
 use atmosphere_mod,     only: atmosphere_restart
 use coupler_types_mod,  only: coupler_2d_bc_type
 
+! GR edit (2023-07-06): add reference to fv_diagnostics_mod, use only
+! get_vorticity
+use fv_diagnostics_mod, only: get_vorticity
 
 !-----------------------------------------------------------------------
 
@@ -70,7 +73,7 @@ public atmos_data_type_chksum
 public lnd_ice_atm_bnd_type_chksum, lnd_atm_bnd_type_chksum
 public ice_atm_bnd_type_chksum
 !-----------------------------------------------------------------------
-
+! GR edit (2023-07-06): addition of vort850 field to atmos_data_type.
 !<PUBLICTYPE >
  type atmos_data_type
      type (domain2d)               :: domain             ! domain decomposition
@@ -84,6 +87,7 @@ public ice_atm_bnd_type_chksum
      real, pointer, dimension(:,:) :: p_bot    => null() ! pressure at lowest model level
      real, pointer, dimension(:,:) :: u_bot    => null() ! zonal wind component at lowest model level
      real, pointer, dimension(:,:) :: v_bot    => null() ! meridional wind component at lowest model level
+     real, pointer, dimension(:,:) :: vort850  => null() ! 850 hPa vorticity 
      real, pointer, dimension(:,:) :: p_surf   => null() ! surface pressure 
      real, pointer, dimension(:,:) :: slp      => null() ! sea level pressure 
      real, pointer, dimension(:,:) :: gust     => null() ! gustiness factor

@@ -1538,6 +1538,7 @@ subroutine sfc_boundary_layer ( dt, Time, Atm, Land, Ice, Land_Ice_Atmos_Boundar
      ex_t_surf = ex_t_surf_miz
   end if
 
+  ! GR edit (2023-07-06): addition of vort850 input argument to surface_flux
   ! [5] compute explicit fluxes and tendencies at all available points ---
   call some(xmap_sfc, ex_avail)
   call surface_flux (&
@@ -1552,7 +1553,7 @@ subroutine sfc_boundary_layer ( dt, Time, Atm, Land, Ice, Land_Ice_Atmos_Boundar
        ex_dhdt_surf, ex_dedt_surf, ex_dfdtr_surf(:,isphum),  ex_drdt_surf,        &
        ex_dhdt_atm,  ex_dfdtr_atm(:,isphum),  ex_dtaudu_atm, ex_dtaudv_atm,       &
        dt,                                                             &
-       ex_land, ex_seawater .gt. 0.0,  ex_avail                          )
+       ex_land, ex_seawater .gt. 0.0,  ex_avail, ex_vort850            )
 
 #ifdef SCM
 ! Option to override surface fluxes for SCM

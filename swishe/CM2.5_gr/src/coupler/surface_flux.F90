@@ -19,6 +19,8 @@
 !!                                                                   !!
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !WY 2022-12-02: option to kill TC by capping evap wind speed over warm sst
+! GR edit (2023-07-06): impose vorticity threshold for 850 hPa vorticity in
+! addition to criteria set by WY
 
 module surface_flux_mod
 !
@@ -268,12 +270,9 @@ logical :: raoult_sat_vap        = .false.
 logical :: do_simple             = .false.
 !WY: parameters used to kill TC by capping evap windspeed at w_cddt where
 !sst > sst_cddt. No cap where sst < sst_cddt - dsst_ddt. Taper in between.
-real    :: w_cddt                = 10.0 !WY: critical wind threshold in evap cap
-real    :: wcap_cddt             = 12.0 !WY: critical wind threshold in evap cap, windspeed capped if >w_cddt and <w0_cddt
-real    :: w0_cddt               = 15.0 !WY: critical wind threshold in evap cap, windspeed=0 if >=w0_cddt
-real    :: wmin_ddt              = 0.0 !WY: minimum w_atm to be set if>w0_cddt
+real    :: w_cddt                = 12.0 !WY: critical wind threshold in evap cap
 real    :: sst_cddt              = 25.0 !WY: critical sst threshold in evap cap
-real    :: dsst_ddt              = 1.0 !WY: sst taper width in evap cap 
+real    :: dsst_ddt              = 5.0 !WY: sst taper width in evap cap 
 
 
 namelist /surface_flux_nml/ no_neg_q,             &
@@ -287,10 +286,7 @@ namelist /surface_flux_nml/ no_neg_q,             &
                             ncar_ocean_flux_orig, &
                             raoult_sat_vap,       &
                             do_simple,            &
-                            w_cddt,               &
-                            wcap_cddt,            &
-                            w0_cddt,              &
-                            wmin_ddt,             &
+                            w_cddt,              &
                             sst_cddt,             &
                             dsst_ddt
    
@@ -389,9 +385,7 @@ subroutine surface_flux_1d (                                           &
 
   integer :: i, nbad
   real, dimension(size(t_atm(:))) :: alpha !!WY: weight used in kill_tc taper
-  real, dimension(size(t_atm(:))) :: w_atm_q !!WY: modified w_atm used in drag_q
-  alpha = 0.0 !WY: default is 0
-  w_atm_q = 0 !WY:
+  alpha = 0.0
 
 
   if (do_init) call surface_flux_init
@@ -504,33 +498,18 @@ subroutine surface_flux_1d (                                           &
      drag_t = cd_t * w_atm
      !WY: try to kill TC by capping evap wind speed over high SST grids
      where (seawater)
-        !WY: first get the w_atm_q
-        where(w_atm>w0_cddt)
-            w_atm_q = wmin_ddt !WY: set to wmin_ddt if very strong wind speed (>w0_cddt)
-        elsewhere(w_atm>wcap_cddt)
-            !WY: linearly decreases to 0 if w_atm between wcap_cddt and w0_cddt
-            w_atm_q = w_cddt - (w_atm - wcap_cddt)*(w_cddt - wmin_ddt)/(w0_cddt - wcap_cddt)
-        elsewhere(w_atm>w_cddt)
-            w_atm_q = w_cddt !WY: constant if w_atm between w_cddt and wcap_cddt 
-        elsewhere
-            w_atm_q = w_atm !WY: w_atm if w_atm<w_cddt
-        endwhere
-        !WY: second, apply to warm SSTs
         where(t_surf0 - 273.15 - sst_cddt>0)
             !WY: warm sst grids cap the evap wind speed
-            !drag_q = cd_q * min(w_cddt, w_atm)
-            !WY: apply w_atm_q to warm SSTs
-            drag_q = cd_q * w_atm_q
+            drag_q = cd_q * min(w_cddt, w_atm)
         elsewhere(t_surf0 - 273.15 - sst_cddt + dsst_ddt<0)
-            drag_q = cd_q * w_atm !WY: cold sst grids use the default w_atm
+            drag_q = cd_q * w_atm !WY: cold sst grids use the default calculation
         elsewhere
             !WY: taper sst: weighted average
             !WY: sst_cddt-dsst_ddt<=t_surf0-273.15<=sst_cddt
             !WY: alpha -> 1 when t_surf0-273.15 -> sst_cddt, warmer
             !WY: alpha -> 0 when t_surf0-273.15 -> sst_cddt-dsst_ddt, cooler
             alpha = (t_surf0 - 273.15 - sst_cddt + dsst_ddt)/dsst_ddt
-            !drag_q = cd_q * (alpha*min(w_cddt, w_atm) + (1-alpha)*w_atm )
-            drag_q = cd_q * (alpha*w_atm_q + (1-alpha)*w_atm )
+            drag_q = cd_q * (alpha*min(w_cddt, w_atm) + (1-alpha)*w_atm )
         endwhere
      elsewhere
          drag_q = cd_q * w_atm !WY: model's default over non-seawater grids

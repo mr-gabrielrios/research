@@ -593,6 +593,10 @@ contains
        idiag%id_vort850 = register_diag_field ( trim(field), 'vort850', axes(1:2), Time,       &
                            '850-mb vorticity', '1/s', missing_value=missing_value )
 
+       ! GR edit (2023-07-06): manual set of id_vort850 to 1 (such that it meets
+       ! the criteria of > 0) to be pulled on call
+       idiag%id_vort850 = 1
+
 !--------------------------
 ! 10-mb winds:
 !--------------------------
