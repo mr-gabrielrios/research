@@ -1,0 +1,87 @@
+#!/bin/csh -f
+unalias *
+set echo
+
+# Variables that need to be changed between compilers
+set platform  = tigercpu_intelmpi_18 # A unique identifier for your platform.
+set NTCDF_HM = /usr/local/netcdf/intel-16.0/hdf5-1.8.16/intel-mpi/4.4.0/
+set HDF5_HM = /usr/local/hdf5/intel-16.0/intel-mpi/1.8.16/
+
+#------------------------------------------------------------------------------------------------------------------------------
+set Root = $cwd/..                                    # The root directory; where the release package was extracted.
+set template      = $Root/bin/$platform.mk            # path to template for your platform.
+set mkmf          = $Root/bin/mkmf                    # path to executable mkmf.
+set sourcedir     = $Root/src                         # path to directory containing model source code.
+set mppnccombine  = $Root/bin/mppnccombine.$platform  # path to executable mppnccombine.
+set landnccombine = $Root/bin/landnccombine.$platform # path to executable landnccombine.
+set PPDIR         = $Root/postprocessing              # path to directory containing postprocessing source code for combining netcdf files.
+set FGDIR         = $Root/fregrid                     # path to root directory containing postprocessing source code and data for interpolation to lat-lon grid.
+set execdir = $cwd/exec.$platform                     # where code is compiled and executable is created.
+set executable = $execdir/CM2.5.x                     # path to model executable.
+set pathnames = $cwd/path_names                       # path to file containing list of source paths.
+#------------------------------------------------------------------------------------------------------------------------------
+# Setting one or more of these to something other than "yes" will cause the script to skip the section indicated.
+set compile_mppnccombine = yes
+set compile_landnccombine = yes
+set compile_fregrid = yes
+set compile_model = yes
+#------------------------------------------------------------------------------------------------------------------------------
+
+source $Root/bin/$platform.csh
+
+#------------------------------------------------------------------------------------------------------------------------------
+if ( $compile_mppnccombine == yes ) then
+   # --- compile mppnccombine.c ---
+   cd $PPDIR
+   icc -O -c -I${NTCDF_HM}/include mppnccombine.c
+   if ( $status != 0 ) exit
+   icc -O -o $mppnccombine  mppnccombine.o -lnetcdf -lnetcdff
+   if ( $status != 0 ) exit
+endif
+#------------------------------------------------------------------------------------------------------------------------------
+if ( $compile_landnccombine == yes ) then
+   ifort -c -i4 -r8  -I${NTCDF_HM}/include nfu.F90
+   if ( $status != 0 ) exit
+   ifort -c -i4 -r8  -I${NTCDF_HM}/include nfu_compress.F90
+   if ( $status != 0 ) exit
+   ifort -c -i4 -r8  -I${NTCDF_HM}/include combine-ncc.F90
+   if ( $status != 0 ) exit
+   ifort -o $landnccombine -lnetcdff nfu.o nfu_compress.o combine-ncc.o
+   if ( $status != 0 ) exit
+endif
+#------------------------------------------------------------------------------------------------------------------------------
+if ( $compile_fregrid == yes ) then
+   cd $FGDIR/src/tools/fregrid
+   setenv KMP_STACKSIZE 512m
+   setenv NC_BLKSZ 1M
+   setenv SITE princeton
+   make HDF5_HOME=$HDF5_HM NETCDF_HOME=$NTCDF_HM -f fre-nctools.mk
+   if ( $status != 0 ) exit
+   cp fregrid_parallel $Root/bin/fregrid_parallel.$platform
+endif
+#------------------------------------------------------------------------------------------------------------------------------
+if ( $compile_model == yes ) then
+   # setup directory structure
+   if ( ! -d $execdir ) mkdir -p $execdir
+   cd $execdir
+
+   # execute mkmf to create makefile
+   set cppDefs = "-Duse_libMPI -Duse_netCDF -DSPMD -DUSE_OCEAN_BGC -DENABLE_ODA -DINTERNAL_FILE_NML -DLAND_BND_TRACERS -DMAXDIMVALS_=5000000 -DMAXFIELDMETHODS_=200 -DMAXFIELDS_=200 -Duse_shared_pointers -DOLD_COS_SG -DOLD_PT_TO_T -DUSE_LOG_DIAG_FIELD_INFO -Duse_LARGEFILE"
+   $mkmf -a $sourcedir -t $template -p $executable:t -c "$cppDefs" -I$sourcedir/mom5/ocean_param/gotm-4.0/include -I$sourcedir/shared/include -I$sourcedir/shared/mpp/include /usr/local/include $pathnames
+   if ( $status != 0 ) then
+      unset echo
+      echo "ERROR: mkmf failed for CM2.5" 
+      exit 1
+   endif
+
+   # --- execute make ---
+   make $executable:t
+   if ( $status != 0 ) then
+      unset echo
+      echo "ERROR: make failed for CM2.5" 
+     exit 1
+   endif
+
+   unset echo
+   echo "NOTE: make successful for CM2.5"
+endif

@@ -1,0 +1,6 @@
+modify source file /tigress/wenchang/CM2.5_tiger2_wy_killtc/src/coupler/surface_flux.F90 to try to kill TCs by capping the wind speed in the calculation of evaporation. 
+
+See the difference between surface_flux.F90.original.F90 and surface_flux_wy.F90.
+
+
+fast compile: only compile those impacted by the updated surface_flux.F90 (updated compile of the Makefile feature).
