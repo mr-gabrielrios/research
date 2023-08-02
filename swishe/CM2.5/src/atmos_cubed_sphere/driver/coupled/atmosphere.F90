@@ -567,12 +567,13 @@ contains
 
 
  subroutine atmosphere_up ( Time,  frac_land, Surf_diff, lprec, fprec, gust, &
-                            vort850, u_star, b_star, q_star )
+                            vort850, rh300, rh500, rh700, rh850, &
+                            u_star, b_star, q_star )
 
    type(time_type),intent(in)         :: Time
    type(surf_diff_type), intent(inout):: Surf_diff
    real, intent(in),  dimension(:,:)  :: frac_land
-   real, intent(inout), dimension(:,:):: gust, vort850
+   real, intent(inout), dimension(:,:):: gust, vort850, rh300, rh500, rh700, rh850
    real, intent(out), dimension(:,:)  :: lprec,   fprec
    real, intent(in), dimension(:,:)   :: u_star, b_star, q_star
 
@@ -639,7 +640,7 @@ contains
    
    ! GR edit - custom fv_diag call for vorticity extraction from fv_diag 
    !call fv_diag(Atm(mytile:mytile), zvir, fv_time, Atm(mytile)%flagstruct%print_freq)
-   call fv_diag_gr(Atm(mytile:mytile), zvir, fv_time, Atm(mytile)%flagstruct%print_freq, vort850)
+   call fv_diag_gr(Atm(mytile:mytile), zvir, fv_time, Atm(mytile)%flagstruct%print_freq, vort850, rh300, rh500, rh700, rh850)
 
    call timing_off('FV_DIAG')
 
@@ -881,52 +882,6 @@ contains
    enddo
 
  end subroutine get_bottom_wind
-
-! GR edit (2023-07-26)
-! Subroutine modifications from original definition in
-! atmos_cubed_sphere/tools/fv_diagnostics.F90:
-! 1) removal of npz because vorticity will be calculated at a single level
-! subroutine get_vorticity(isc, iec, jsc, jec ,isd, ied, jsd, jed, u, v, &
-!                          vort, dx, dy, rarea)
-!     integer isd, ied, jsd, jed, npz
-! end subroutine
-! 
-! ! SAFE-ish
-! subroutine get_vorticity(u, v, vort)
-!     ! Note: isd and ied indices were changed to isc, iec to prove concept
-!     real, intent(in)  :: u(isc:iec, jsc:jec+1), v(isc:iec+1, jsc:jec)
-!     real, intent(out), dimension(isc:iec,jsc:jec) :: vort
-!     ! Local
-!     real, pointer :: rarea(:,:)
-!     real, pointer, dimension(:,:) :: dx, dy
-!     real :: utmp(isc:iec, jsc:jec+1), vtmp(isc:iec+1, jsc:jec)
-!     integer :: i,j
-! 
-!     print *, "Pre-load vorticity check"
-! 
-!     dx = Atm(mytile)%gridstruct%dx(isc:iec,jsc:jec+1)
-!     dy = Atm(mytile)%gridstruct%dy(isc:iec+1, jsc:jec)
-!     rarea => Atm(mytile)%gridstruct%area
-! 
-!     print *, "Post-load vorticity check"
-! 
-!     do j=jsc,jec+1
-!         do i=isc,iec
-!             utmp(i,j) = u(i,j)*dx(i,j)
-!         enddo
-!     enddo
-!     do j=jsc,jec
-!         do i=isc,iec+1
-!             vtmp(i,j) = v(i,j)*dy(i,j)
-!         enddo
-!     enddo
-!     do j=jsc,jec
-!         do i=isc,iec
-!             vort(i,j) = rarea(i,j)*(utmp(i,j)-utmp(i,j+1)-vtmp(i,j)+vtmp(i+1,j))
-!         enddo
-!     enddo
-! end subroutine get_vorticity
-
 
  subroutine get_stock_pe(index, value)
    integer, intent(in) :: index

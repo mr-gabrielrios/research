@@ -88,6 +88,10 @@ public ice_atm_bnd_type_chksum
      real, pointer, dimension(:,:) :: u_bot    => null() ! zonal wind component at lowest model level
      real, pointer, dimension(:,:) :: v_bot    => null() ! meridional wind component at lowest model level
      real, pointer, dimension(:,:) :: vort850  => null() ! 850 hPa vorticity 
+     real, pointer, dimension(:,:) :: rh300    => null() ! 300 hPa relhum 
+     real, pointer, dimension(:,:) :: rh500    => null() ! 500 hPa relhum
+     real, pointer, dimension(:,:) :: rh700    => null() ! 700 hPa relhum 
+     real, pointer, dimension(:,:) :: rh850    => null() ! 850 hPa relhum 
      real, pointer, dimension(:,:) :: p_surf   => null() ! surface pressure 
      real, pointer, dimension(:,:) :: slp      => null() ! sea level pressure 
      real, pointer, dimension(:,:) :: gust     => null() ! gustiness factor
@@ -318,6 +322,7 @@ type (atmos_data_type), intent(inout) :: Atmos
 
     call atmosphere_up (Atmos%Time,  Surface_boundary%land_frac, Atmos%Surf_diff, &
                         Atmos%lprec, Atmos%fprec, Atmos%gust, Atmos%vort850, &
+                        Atmos%rh300, Atmos%rh500, Atmos%rh700, Atmos%rh850, & 
                         Surface_boundary%u_star, Surface_boundary%b_star, Surface_boundary%q_star)
 
 !   --- advance time ---
@@ -446,6 +451,10 @@ type (time_type), intent(in) :: Time_init, Time, Time_step
                Atmos % u_bot    (nlon,nlat), &
                Atmos % v_bot    (nlon,nlat), &
                Atmos % vort850    (nlon,nlat), &
+               Atmos % rh300    (nlon,nlat), &
+               Atmos % rh500    (nlon,nlat), &
+               Atmos % rh700    (nlon,nlat), &
+               Atmos % rh850    (nlon,nlat), &
                Atmos % p_surf   (nlon,nlat), &
                Atmos % slp      (nlon,nlat), &
                Atmos % gust     (nlon,nlat), &
@@ -664,7 +673,11 @@ type (atmos_data_type), intent(inout) :: Atmos
                Atmos % p_bot    , &
                Atmos % u_bot    , &
                Atmos % v_bot    , &
-               Atmos % vort850    , &
+               Atmos % vort850  , &
+               Atmos % rh300     , &
+               Atmos % rh500     , &
+               Atmos % rh700     , &
+               Atmos % rh850     , &
                Atmos % p_surf   , &
                Atmos % slp      , &
                Atmos % gust     , &
@@ -828,6 +841,10 @@ type(atmos_data_type), intent(in) :: atm
   write(outunit,100) ' atm%u_bot                  ', mpp_chksum(atm%u_bot                 )
   write(outunit,100) ' atm%v_bot                  ', mpp_chksum(atm%v_bot                 )
   write(outunit,100) ' atm%vort850                ', mpp_chksum(atm%vort850               )
+  write(outunit,100) ' atm%rh300                   ', mpp_chksum(atm%rh300                  )
+  write(outunit,100) ' atm%rh500                   ', mpp_chksum(atm%rh500                  )
+  write(outunit,100) ' atm%rh700                   ', mpp_chksum(atm%rh700                  )
+  write(outunit,100) ' atm%rh850                   ', mpp_chksum(atm%rh850                  )
   write(outunit,100) ' atm%p_surf                 ', mpp_chksum(atm%p_surf                )
   write(outunit,100) ' atm%slp                    ', mpp_chksum(atm%slp                   )
   write(outunit,100) ' atm%gust                   ', mpp_chksum(atm%gust                  )

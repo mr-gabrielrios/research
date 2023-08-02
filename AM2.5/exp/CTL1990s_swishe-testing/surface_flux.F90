@@ -530,7 +530,7 @@ subroutine surface_flux_1d (                                           &
         ! (2016, J. Clim.))
 
         ! GR edit: only Northern Hemisphere storms right now (vort850 > 0)
-        where ((rh300 > 50) .and. (rh850 > 70) .and. (abs(vort850) > 1e-4))
+        where ((rh300 > 50) .and. (rh850 > 50) .and. (abs(vort850) > 1e-4))
             !WY: first get the w_atm_q
             where(w_atm>w0_cddt)
                 w_atm_q = wmin_ddt !WY: set to wmin_ddt if very strong wind speed (>w0_cddt)

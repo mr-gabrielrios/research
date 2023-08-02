@@ -2007,13 +2007,14 @@ contains
 
  end subroutine fv_diag
 
- subroutine fv_diag_gr(Atm, zvir, Time, print_freq, vort850)
+ subroutine fv_diag_gr(Atm, zvir, Time, print_freq, vort850, rh300, rh500, rh700, rh850)
 
     type(fv_atmos_type), intent(inout) :: Atm(:)
     type(time_type),     intent(in) :: Time
     real,                intent(in):: zvir
     integer,             intent(in):: print_freq
     real,                intent(inout) :: vort850(:, :)
+    real,                intent(inout) :: rh300(:, :), rh500(:, :), rh700(:, :), rh850(:, :)
 
     integer :: isc, iec, jsc, jec, n, ntileMe
     integer :: isd, ied, jsd, jed, npz, itrac
@@ -2241,12 +2242,14 @@ contains
              enddo
           enddo
        endif
+    
 
        if ( idiag%id_vort850>0 .or. idiag%id_vorts>0 .or. idiag%id_vort>0 .or. idiag%id_pv>0 .or. idiag%id_rh>0 .or. idiag%id_x850>0 ) then
           call get_vorticity(isc, iec, jsc, jec, isd, ied, jsd, jed, npz, Atm(n)%u, Atm(n)%v, wk, &
           Atm(n)%gridstruct%dx, Atm(n)%gridstruct%dy, Atm(n)%gridstruct%rarea)
 
-          vort850 = wk(:, :, 0)
+          call interpolate_vertical(isc, iec, jsc, jec, npz, 850.e2, Atm(n)%peln, wk, a2)
+          vort850 = a2
 
           if(idiag%id_vort >0) used=send_data(idiag%id_vort,  wk, Time)
           if(idiag%id_vorts>0) used=send_data(idiag%id_vorts, wk(isc:iec,jsc:jec,npz), Time)
@@ -2332,7 +2335,7 @@ contains
 
        endif
 
-       ! rel hum from physics at selected press levels (for IPCC)
+! rel hum from physics at selected press levels (for IPCC)
        if (idiag%id_rh50>0  .or. idiag%id_rh100>0 .or. idiag%id_rh200>0 .or. idiag%id_rh250>0 .or. &
            idiag%id_rh500>0 .or. idiag%id_rh700>0 .or. idiag%id_rh850>0 .or. idiag%id_rh1000>0) then
            ! compute mean pressure
@@ -2345,6 +2348,24 @@ contains
                call rh_calc (a2, Atm(n)%pt(isc:iec,jsc:jec,k), &
                              Atm(n)%q(isc:iec,jsc:jec,k,sphum), wk(isc:iec,jsc:jec,k))
            enddo
+       
+           ! Custom out relative humidities for surface_flux.F90 usage
+           call interpolate_vertical(isc, iec, jsc, jec, npz, 250.e2, &
+                                     Atm(n)%peln, wk(isc:iec,jsc:jec,:),a2)
+           rh300 = a2
+           
+           call interpolate_vertical(isc, iec, jsc, jec, npz, 500.e2, &
+                                     Atm(n)%peln, wk(isc:iec,jsc:jec,:),a2)
+           rh500 = a2
+        
+           call interpolate_vertical(isc, iec, jsc, jec, npz, 700.e2, &
+                                     Atm(n)%peln, wk(isc:iec,jsc:jec,:),a2)
+           rh700 = a2
+           
+           call interpolate_vertical(isc, iec, jsc, jec, npz, 850.e2, &
+                                     Atm(n)%peln, wk(isc:iec,jsc:jec,:),a2)
+           rh850 = a2
+                      
            if (idiag%id_rh50>0) then
                call interpolate_vertical(isc, iec, jsc, jec, npz, 50.e2, Atm(n)%peln, wk(isc:iec,jsc:jec,:), a2)
                used=send_data(idiag%id_rh50, a2, Time)

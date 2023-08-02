@@ -274,9 +274,9 @@ logical :: raoult_sat_vap        = .false.
 logical :: do_simple             = .false.
 !WY: parameters used to kill TC by capping evap windspeed at w_cddt where
 !sst > sst_cddt. No cap where sst < sst_cddt - dsst_ddt. Taper in between.
-real    :: w_cddt                = 10.0 !WY: critical wind threshold in evap cap
-real    :: wcap_cddt             = 12.0 !WY: critical wind threshold in evap cap, windspeed capped if >w_cddt and <w0_cddt
-real    :: w0_cddt               = 15.0 !WY: critical wind threshold in evap cap, windspeed=0 if >=w0_cddt
+real    :: w_cddt                 = 5.0 !WY: critical wind threshold in evap cap
+real    :: wcap_cddt             = 5.0 !WY: critical wind threshold in evap cap, windspeed capped if >w_cddt and <w0_cddt
+real    :: w0_cddt               = 5.0 !WY: critical wind threshold in evap cap, windspeed=0 if >=w0_cddt
 real    :: wmin_ddt              = 0.0 !WY: minimum w_atm to be set if>w0_cddt
 real    :: sst_cddt              = 25.0 !WY: critical sst threshold in evap cap
 real    :: dsst_ddt              = 1.0 !WY: sst taper width in evap cap
