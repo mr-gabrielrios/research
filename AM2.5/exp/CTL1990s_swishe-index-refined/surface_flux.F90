@@ -274,9 +274,9 @@ logical :: raoult_sat_vap        = .false.
 logical :: do_simple             = .false.
 !WY: parameters used to kill TC by capping evap windspeed at w_cddt where
 !sst > sst_cddt. No cap where sst < sst_cddt - dsst_ddt. Taper in between.
-real    :: w_cddt                = 5.0 !WY: critical wind threshold in evap cap
-real    :: wcap_cddt             = 5.0 !WY: critical wind threshold in evap cap, windspeed capped if >w_cddt and <w0_cddt
-real    :: w0_cddt               = 5.0 !WY: critical wind threshold in evap cap, windspeed=0 if >=w0_cddt
+real    :: w_cddt                = 10.0 !WY: critical wind threshold in evap cap
+real    :: wcap_cddt             = 12.0 !WY: critical wind threshold in evap cap, windspeed capped if >w_cddt and <w0_cddt
+real    :: w0_cddt               = 15.0 !WY: critical wind threshold in evap cap, windspeed=0 if >=w0_cddt
 real    :: wmin_ddt              = 0.0 !WY: minimum w_atm to be set if>w0_cddt
 real    :: sst_cddt              = 25.0 !WY: critical sst threshold in evap cap
 real    :: dsst_ddt              = 1.0 !WY: sst taper width in evap cap
@@ -297,7 +297,7 @@ namelist /surface_flux_nml/ no_neg_q,             &
                             w0_cddt,              &
                             wmin_ddt,             &
                             sst_cddt,             &
-                            dsst_ddt
+                            dsst_ddt            
    
 
 
@@ -375,7 +375,7 @@ subroutine surface_flux_1d (                                           &
        p_atm,     z_atm,      t_ca,                          &
        p_surf,    t_surf,     u_surf,    v_surf,  &
        rough_mom, rough_heat, rough_moist,  rough_scale, gust, & 
-       vort850, lat_bnd, rh300, rh500, rh700, rh850 
+       vort850, lat_bnd, rh300, rh500, rh700, rh850       
   real, intent(out), dimension(:) :: &
        flux_t,    flux_q,     flux_r,    flux_u,  flux_v,    &
        dhdt_surf, dedt_surf,  dedq_surf, drdt_surf,          &
@@ -396,6 +396,9 @@ subroutine surface_flux_1d (                                           &
        t_surf0,  t_surf1,  u_dif,     v_dif,               &
        rho_drag, drag_t,    drag_m,   drag_q,    rho,      &
        q_atm,    q_surf0,  dw_atmdu,  dw_atmdv,  w_gust
+  real, dimension(size(vort850(:))) :: &
+       rh300_weighted, rh500_weighted, rh700_weighted,     &
+       rh850_weighted, vort850_weighted, es_thresh
 
   integer :: i, nbad
   real, dimension(size(t_atm(:))) :: alpha !!WY: weight used in kill_tc taper
@@ -507,13 +510,18 @@ subroutine surface_flux_1d (                                           &
                              seawater, cd_m, cd_t, cd_q, u_star, b_star     )
   end if
   
-  ! print *, 'vort850 check: ', vort850(1:10) 
-  ! print *, 'lat check: ', lat_bnd(1:10)
-  ! print *, 'lat check: ',  lat_bnd(10:15)
-  ! print *, 't700 check: ', t500(10:15)
-  ! print *, 'q700 check: ', q700(10:15)
-  ! print *, 'rh500 check: ', rh500(10:15)
-  ! print *, 'rh700 check: ', rh700(10:15)
+  ! Define an evaporation suppression index to prevent a binary approach from
+  ! not being applied to relevant TC-like vortices
+ 
+  rh300_weighted      = merge(0.5, 0.0, (rh300 .ge. 50))
+  rh500_weighted      = merge(1.0, 0.0, (rh500 .ge. 60))
+  rh700_weighted      = merge(1.0, 0.0, (rh700 .ge. 70))
+  rh850_weighted      = merge(1.0, 0.0, (rh850 .ge. 75))
+  vort850_weighted    = merge(0.5, 0.0, (abs(vort850) .ge. 1e-4))
+  do i = 1, size(rh300_weighted)
+      es_thresh(i)    = rh300_weighted(i) + rh500_weighted(i) + rh700_weighted(i) &
+                        + rh850_weighted(i) + vort850_weighted(i) 
+  enddo
 
   where (avail)
     ! scale momentum drag coefficient on orographic roughness
@@ -530,7 +538,8 @@ subroutine surface_flux_1d (                                           &
         ! (2016, J. Clim.))
 
         ! GR edit: only Northern Hemisphere storms right now (vort850 > 0)
-        where ((rh300 > 39) .and. (rh500 > 49) .and. (rh700 > 64) .and. (rh850 > 74) .and. (abs(vort850) > 1.5e-4))
+        ! where ((rh300 > 39) .and. (rh500 > 49) .and. (rh700 > 64) .and. (rh850 > 74) .and. (abs(vort850) > 1.5e-4))
+        where (es_thresh .ge. 3.5)
             !WY: first get the w_atm_q
             where(w_atm>w0_cddt)
                 w_atm_q = wmin_ddt !WY: set to wmin_ddt if very strong wind speed (>w0_cddt)
