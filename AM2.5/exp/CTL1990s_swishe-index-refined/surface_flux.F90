@@ -274,9 +274,9 @@ logical :: raoult_sat_vap        = .false.
 logical :: do_simple             = .false.
 !WY: parameters used to kill TC by capping evap windspeed at w_cddt where
 !sst > sst_cddt. No cap where sst < sst_cddt - dsst_ddt. Taper in between.
-real    :: w_cddt                = 10.0 !WY: critical wind threshold in evap cap
-real    :: wcap_cddt             = 12.0 !WY: critical wind threshold in evap cap, windspeed capped if >w_cddt and <w0_cddt
-real    :: w0_cddt               = 15.0 !WY: critical wind threshold in evap cap, windspeed=0 if >=w0_cddt
+real    :: w_cddt                = 7.5 !WY: critical wind threshold in evap cap
+real    :: wcap_cddt             = 10.0 !WY: critical wind threshold in evap cap, windspeed capped if >w_cddt and <w0_cddt
+real    :: w0_cddt               = 13.0 !WY: critical wind threshold in evap cap, windspeed=0 if >=w0_cddt
 real    :: wmin_ddt              = 0.0 !WY: minimum w_atm to be set if>w0_cddt
 real    :: sst_cddt              = 25.0 !WY: critical sst threshold in evap cap
 real    :: dsst_ddt              = 1.0 !WY: sst taper width in evap cap
@@ -514,7 +514,7 @@ subroutine surface_flux_1d (                                           &
   ! not being applied to relevant TC-like vortices
  
   rh300_weighted      = merge(0.5, 0.0, (rh300 .ge. 50))
-  rh500_weighted      = merge(1.0, 0.0, (rh500 .ge. 60))
+  rh500_weighted      = merge(0.75, 0.0, (rh500 .ge. 60))
   rh700_weighted      = merge(1.0, 0.0, (rh700 .ge. 70))
   rh850_weighted      = merge(1.0, 0.0, (rh850 .ge. 75))
   vort850_weighted    = merge(0.5, 0.0, (abs(vort850) .ge. 1e-4))
@@ -539,7 +539,7 @@ subroutine surface_flux_1d (                                           &
 
         ! GR edit: only Northern Hemisphere storms right now (vort850 > 0)
         ! where ((rh300 > 39) .and. (rh500 > 49) .and. (rh700 > 64) .and. (rh850 > 74) .and. (abs(vort850) > 1.5e-4))
-        where (es_thresh .ge. 3.5)
+        where (es_thresh .ge. 3.25)
             !WY: first get the w_atm_q
             where(w_atm>w0_cddt)
                 w_atm_q = wmin_ddt !WY: set to wmin_ddt if very strong wind speed (>w0_cddt)
