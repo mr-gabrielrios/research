@@ -1619,7 +1619,7 @@ contains
        write(outunit,100) 'atm%u_bot', mpp_chksum(atm%u_bot)
        write(outunit,100) 'atm%v_bot', mpp_chksum(atm%v_bot)
        write(outunit,100) 'atm%vort850', mpp_chksum(atm%vort850)
-       write(outunit,100) 'atm%rh300', mpp_chksum(atm%rh300)
+       write(outunit,100) 'atm%rh250', mpp_chksum(atm%rh250)
        write(outunit,100) 'atm%rh500', mpp_chksum(atm%rh500)
        write(outunit,100) 'atm%rh700', mpp_chksum(atm%rh700)
        write(outunit,100) 'atm%rh850', mpp_chksum(atm%rh850)

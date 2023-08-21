@@ -274,9 +274,9 @@ logical :: raoult_sat_vap        = .false.
 logical :: do_simple             = .false.
 !WY: parameters used to kill TC by capping evap windspeed at w_cddt where
 !sst > sst_cddt. No cap where sst < sst_cddt - dsst_ddt. Taper in between.
-real    :: w_cddt                = 10.0 !WY: critical wind threshold in evap cap
+real    :: w_cddt                = 7.5 !WY: critical wind threshold in evap cap
 real    :: wcap_cddt             = 12.0 !WY: critical wind threshold in evap cap, windspeed capped if >w_cddt and <w0_cddt
-real    :: w0_cddt               = 15.0 !WY: critical wind threshold in evap cap, windspeed=0 if >=w0_cddt
+real    :: w0_cddt               = 14.5 !WY: critical wind threshold in evap cap, windspeed=0 if >=w0_cddt
 real    :: wmin_ddt              = 0.0 !WY: minimum w_atm to be set if>w0_cddt
 real    :: sst_cddt              = 25.0 !WY: critical sst threshold in evap cap
 real    :: dsst_ddt              = 1.0 !WY: sst taper width in evap cap
@@ -297,7 +297,7 @@ namelist /surface_flux_nml/ no_neg_q,             &
                             w0_cddt,              &
                             wmin_ddt,             &
                             sst_cddt,             &
-                            dsst_ddt
+                            dsst_ddt            
    
 
 
@@ -364,7 +364,7 @@ subroutine surface_flux_1d (                                           &
      dhdt_surf, dedt_surf,  dedq_surf,  drdt_surf,                     &
      dhdt_atm,  dedq_atm,   dtaudu_atm, dtaudv_atm,                    &
      dt,        land,      seawater,     avail,     vort850, lat_bnd,  &
-     rh300, rh500, rh700, rh850)
+     rh250, rh500, rh700, rh850)
 !</PUBLICROUTINE>
 !  slm Mar 28 2002 -- remove agument drag_q since it is just cd_q*wind
 ! ============================================================================
@@ -375,7 +375,7 @@ subroutine surface_flux_1d (                                           &
        p_atm,     z_atm,      t_ca,                          &
        p_surf,    t_surf,     u_surf,    v_surf,  &
        rough_mom, rough_heat, rough_moist,  rough_scale, gust, & 
-       vort850, lat_bnd, rh300, rh500, rh700, rh850 
+       vort850, lat_bnd, rh250, rh500, rh700, rh850       
   real, intent(out), dimension(:) :: &
        flux_t,    flux_q,     flux_r,    flux_u,  flux_v,    &
        dhdt_surf, dedt_surf,  dedq_surf, drdt_surf,          &
@@ -396,6 +396,9 @@ subroutine surface_flux_1d (                                           &
        t_surf0,  t_surf1,  u_dif,     v_dif,               &
        rho_drag, drag_t,    drag_m,   drag_q,    rho,      &
        q_atm,    q_surf0,  dw_atmdu,  dw_atmdv,  w_gust
+  real, dimension(size(vort850(:))) :: &
+       rh250_weighted, rh500_weighted, rh700_weighted,     &
+       rh850_weighted, vort850_weighted, es_thresh
 
   integer :: i, nbad
   real, dimension(size(t_atm(:))) :: alpha !!WY: weight used in kill_tc taper
@@ -507,13 +510,17 @@ subroutine surface_flux_1d (                                           &
                              seawater, cd_m, cd_t, cd_q, u_star, b_star     )
   end if
   
-  ! print *, 'vort850 check: ', vort850(1:10) 
-  ! print *, 'lat check: ', lat_bnd(1:10)
-  ! print *, 'lat check: ',  lat_bnd(10:15)
-  ! print *, 't700 check: ', t500(10:15)
-  ! print *, 'q700 check: ', q700(10:15)
-  ! print *, 'rh500 check: ', rh500(10:15)
-  ! print *, 'rh700 check: ', rh700(10:15)
+  ! Define an evaporation suppression index to prevent a binary approach from
+  ! not being applied to relevant TC-like vortices
+ 
+  rh500_weighted      = merge(0.5, 0.0, (rh500 .ge. 60))
+  rh700_weighted      = merge(1.0, 0.0, (rh700 .ge. 70))
+  rh850_weighted      = merge(1.0, 0.0, (rh850 .ge. 75))
+  vort850_weighted    = merge(0.5, 0.0, (abs(vort850) .ge. 1e-4))
+  do i = 1, size(rh250_weighted)
+      es_thresh(i)    = rh500_weighted(i) + rh700_weighted(i) &
+                        + rh850_weighted(i) + vort850_weighted(i) 
+  enddo
 
   where (avail)
     ! scale momentum drag coefficient on orographic roughness
@@ -530,7 +537,8 @@ subroutine surface_flux_1d (                                           &
         ! (2016, J. Clim.))
 
         ! GR edit: only Northern Hemisphere storms right now (vort850 > 0)
-        where ((rh300 > 50) .and. (rh850 > 70) .and. (abs(vort850) > 1e-4))
+        ! where ((rh300 > 39) .and. (rh500 > 49) .and. (rh700 > 64) .and. (rh850 > 74) .and. (abs(vort850) > 1.5e-4))
+        where (es_thresh .ge. 2.5)
             !WY: first get the w_atm_q
             where(w_atm>w0_cddt)
                 w_atm_q = wmin_ddt !WY: set to wmin_ddt if very strong wind speed (>w0_cddt)
@@ -657,7 +665,7 @@ subroutine surface_flux_0d (                                                 &
      dhdt_surf_0, dedt_surf_0,  dedq_surf_0,  drdt_surf_0,                   &
      dhdt_atm_0,  dedq_atm_0,   dtaudu_atm_0, dtaudv_atm_0,                  &
      dt,          land_0,       seawater_0,  avail_0, vort850_0, lat_bnd_0,  &
-     rh300_0, rh500_0, rh700_0, rh850_0)
+     rh250_0, rh500_0, rh700_0, rh850_0)
 
   ! ---- arguments -----------------------------------------------------------
   logical, intent(in) :: land_0,  seawater_0, avail_0
@@ -666,7 +674,7 @@ subroutine surface_flux_0d (                                                 &
        p_atm_0,     z_atm_0,      t_ca_0,                              &
        p_surf_0,    t_surf_0,     u_surf_0,    v_surf_0,               &
        rough_mom_0, rough_heat_0, rough_moist_0, rough_scale_0, gust_0,&
-       vort850_0, lat_bnd_0, rh300_0, rh500_0, rh700_0, rh850_0
+       vort850_0, lat_bnd_0, rh250_0, rh500_0, rh700_0, rh850_0
   real, intent(out) ::                                                 &
        flux_t_0,    flux_q_0,     flux_r_0,    flux_u_0,  flux_v_0,    &
        dhdt_surf_0, dedt_surf_0,  dedq_surf_0, drdt_surf_0,            &
@@ -683,7 +691,7 @@ subroutine surface_flux_0d (                                                 &
        p_atm,     z_atm,      t_ca,                          &
        p_surf,    t_surf,     u_surf,    v_surf,             &
        rough_mom, rough_heat, rough_moist,  rough_scale,     & 
-       gust, vort850, lat_bnd, rh300, rh500, rh700, rh850
+       gust, vort850, lat_bnd, rh250, rh500, rh700, rh850
   real, dimension(1) :: &
        flux_t,    flux_q,     flux_r,    flux_u,  flux_v,    &
        dhdt_surf, dedt_surf,  dedq_surf, drdt_surf,          &
@@ -717,7 +725,7 @@ subroutine surface_flux_0d (                                                 &
   avail(1)       = avail_0
   vort850(1)     = vort850_0
   lat_bnd(1)     = lat_bnd_0
-  rh300(1)     = rh300_0
+  rh250(1)     = rh250_0
   rh500(1)     = rh500_0
   rh700(1)     = rh700_0
   rh850(1)     = rh850_0
@@ -733,7 +741,7 @@ subroutine surface_flux_0d (                                                 &
        dhdt_surf, dedt_surf,  dedq_surf,  drdt_surf,                     &
        dhdt_atm,  dedq_atm,   dtaudu_atm, dtaudv_atm,                    &
        dt,        land,      seawater, avail, vort850, lat_bnd,          &
-       rh300, rh500, rh700, rh850)
+       rh250, rh500, rh700, rh850)
 
   flux_t_0     = flux_t(1)
   flux_q_0     = flux_q(1)
@@ -770,7 +778,7 @@ subroutine surface_flux_2d (                                           &
      dhdt_surf, dedt_surf,  dedq_surf,  drdt_surf,                     &
      dhdt_atm,  dedq_atm,   dtaudu_atm, dtaudv_atm,                    &
      dt,        land,       seawater,  avail, vort850, lat_bnd, &
-     rh300, rh500, rh700, rh850)
+     rh250, rh500, rh700, rh850)
 
   ! ---- arguments -----------------------------------------------------------
   logical, intent(in), dimension(:,:) :: land,  seawater, avail
@@ -779,7 +787,7 @@ subroutine surface_flux_2d (                                           &
        p_atm,     z_atm,      t_ca,                          &
        p_surf,    t_surf,     u_surf,    v_surf,             &
        rough_mom, rough_heat, rough_moist, rough_scale, gust, &
-       vort850, lat_bnd, rh300, rh500, rh700, rh850
+       vort850, lat_bnd, rh250, rh500, rh700, rh850
   real, intent(out), dimension(:,:) :: &
        flux_t,    flux_q,     flux_r,    flux_u,  flux_v,    &
        dhdt_surf, dedt_surf,  dedq_surf, drdt_surf,          &
@@ -804,7 +812,7 @@ subroutine surface_flux_2d (                                           &
           dhdt_surf(:,j), dedt_surf(:,j),  dedq_surf(:,j),  drdt_surf(:,j),                               &
           dhdt_atm(:,j),  dedq_atm(:,j),   dtaudu_atm(:,j), dtaudv_atm(:,j),                              &
           dt,             land(:,j),       seawater(:,j),  avail(:,j), vort850(:,j), lat_bnd(:,j),        &
-          rh300(:, j), rh500(:,j), rh700(:, j), rh850(:, j) )
+          rh250(:, j), rh500(:,j), rh700(:, j), rh850(:, j) )
   end do
 end subroutine surface_flux_2d
 

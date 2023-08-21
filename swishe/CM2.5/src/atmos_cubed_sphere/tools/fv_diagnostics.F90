@@ -2007,14 +2007,14 @@ contains
 
  end subroutine fv_diag
 
- subroutine fv_diag_gr(Atm, zvir, Time, print_freq, vort850, rh300, rh500, rh700, rh850)
+ subroutine fv_diag_gr(Atm, zvir, Time, print_freq, vort850, rh250, rh500, rh700, rh850)
 
     type(fv_atmos_type), intent(inout) :: Atm(:)
     type(time_type),     intent(in) :: Time
     real,                intent(in):: zvir
     integer,             intent(in):: print_freq
     real,                intent(inout) :: vort850(:, :)
-    real,                intent(inout) :: rh300(:, :), rh500(:, :), rh700(:, :), rh850(:, :)
+    real,                intent(inout) :: rh250(:, :), rh500(:, :), rh700(:, :), rh850(:, :)
 
     integer :: isc, iec, jsc, jec, n, ntileMe
     integer :: isd, ied, jsd, jed, npz, itrac
@@ -2352,7 +2352,7 @@ contains
            ! Custom out relative humidities for surface_flux.F90 usage
            call interpolate_vertical(isc, iec, jsc, jec, npz, 250.e2, &
                                      Atm(n)%peln, wk(isc:iec,jsc:jec,:),a2)
-           rh300 = a2
+           rh250 = a2
            
            call interpolate_vertical(isc, iec, jsc, jec, npz, 500.e2, &
                                      Atm(n)%peln, wk(isc:iec,jsc:jec,:),a2)

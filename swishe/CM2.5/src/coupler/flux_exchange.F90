@@ -1186,7 +1186,7 @@ subroutine sfc_boundary_layer ( dt, Time, Atm, Land, Ice, Land_Ice_Atmos_Boundar
        ex_gust,       &
        ex_t_surf4,    &
        ex_u_surf, ex_v_surf, ex_vort850,  & ! GR edit (2023-07-14)
-       ex_rh300, ex_rh500, ex_rh700, ex_rh850, &
+       ex_rh250, ex_rh500, ex_rh700, ex_rh850, &
        ex_rough_mom, ex_rough_heat, ex_rough_moist, &
        ex_rough_scale,&
        ex_q_star,     &
@@ -1321,7 +1321,7 @@ subroutine sfc_boundary_layer ( dt, Time, Atm, Land, Ice, Land_Ice_Atmos_Boundar
   ex_u_surf   =   0.
   ex_v_surf   =   0.
   ex_vort850  =   0. ! GR edit (2023-07-14)
-  ex_rh300  =   0. ! GR edit (2023-07-14)
+  ex_rh250  =   0. ! GR edit (2023-07-14)
   ex_rh500  =   0. ! GR edit (2023-07-14)
   ex_rh700  =   0. ! GR edit (2023-07-14)
   ex_rh850  =   0. ! GR edit (2023-07-14)
@@ -1347,7 +1347,7 @@ subroutine sfc_boundary_layer ( dt, Time, Atm, Land, Ice, Land_Ice_Atmos_Boundar
   call data_override ('ATM', 'slp',    Atm%slp,    Time)
   call data_override ('ATM', 'gust',   Atm%gust,   Time)
   call data_override ('ATM', 'vort850',   Atm%vort850,   Time)
-  call data_override ('ATM', 'rh300',   Atm%rh300,   Time)
+  call data_override ('ATM', 'rh250',   Atm%rh250,   Time)
   call data_override ('ATM', 'rh500',   Atm%rh500,   Time)
   call data_override ('ATM', 'rh700',   Atm%rh700,   Time)
   call data_override ('ATM', 'rh850',   Atm%rh850,   Time)
@@ -1453,7 +1453,7 @@ subroutine sfc_boundary_layer ( dt, Time, Atm, Land, Ice, Land_Ice_Atmos_Boundar
   call put_to_xgrid (Atm%slp,    'ATM', ex_slp,    xmap_sfc, remap_method=remap_method, complete=.false.)
   call put_to_xgrid (Atm%gust,   'ATM', ex_gust,   xmap_sfc, remap_method=remap_method, complete=.true.)
   call put_to_xgrid (Atm%vort850,   'ATM', ex_vort850,   xmap_sfc, remap_method=remap_method, complete=.true.)
-  call put_to_xgrid (Atm%rh300,   'ATM', ex_rh300,   xmap_sfc, remap_method=remap_method, complete=.true.)
+  call put_to_xgrid (Atm%rh250,   'ATM', ex_rh250,   xmap_sfc, remap_method=remap_method, complete=.true.)
   call put_to_xgrid (Atm%rh500,   'ATM', ex_rh500,   xmap_sfc, remap_method=remap_method, complete=.true.)
   call put_to_xgrid (Atm%rh700,   'ATM', ex_rh700,   xmap_sfc, remap_method=remap_method, complete=.true.)
   call put_to_xgrid (Atm%rh850,   'ATM', ex_rh850,   xmap_sfc, remap_method=remap_method, complete=.true.)
@@ -1574,7 +1574,7 @@ subroutine sfc_boundary_layer ( dt, Time, Atm, Land, Ice, Land_Ice_Atmos_Boundar
        ex_dhdt_atm,  ex_dfdtr_atm(:,isphum),  ex_dtaudu_atm, ex_dtaudv_atm,       &
        dt,                                                             &
        ex_land, ex_seawater .gt. 0.0,  ex_avail, ex_vort850, ex_lat_bnd, &
-       ex_rh300, ex_rh500, ex_rh700, ex_rh850)
+       ex_rh250, ex_rh500, ex_rh700, ex_rh850)
 
 #ifdef SCM
 ! Option to override surface fluxes for SCM
