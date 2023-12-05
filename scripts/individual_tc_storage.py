@@ -283,21 +283,6 @@ def retrieve_tracked_TCs(dirname, storm_type, year_range, basins=None):
     
     return data, storms
 
-def pull_gcm_data(dirname, year, output_type):
-    
-    ''' Method to read data for given parameters. '''
-    
-    # Get filenames for corresponding files
-    filename = '{0:04d}0101.{1}.nc'.format(year, output_type)
-    try:
-        fname = os.path.join(dirname, filename)
-        # Retrieve data
-        data = xr.open_dataset(fname)
-    except:
-        return None
-    
-    return data
-
 def retrieve_model_data(model, dirname, year_range, output_type='atmos_month', benchmarking=False):
     
     '''
@@ -384,7 +369,7 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
         for i in range(0, len(storm)):        
             # Convert from tracked TC timestamp convention (datetime) to model timestamp convention (cftime DatetimeNoLeap)
             try:
-                if storm.iloc[i]['time'].year < 2050:
+                if storm.iloc[i]['time'].year < 2101:
                     year_adjust = 0 if 'FLOR' in dirname else 1900
                     cf_timestamp = cftime.DatetimeNoLeap(year=storm.iloc[i]['time'].year-year_adjust, month=storm.iloc[i]['time'].month, 
                                                          day=storm.iloc[i]['time'].day, hour=storm.iloc[i]['time'].hour)
@@ -641,7 +626,8 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
 
 if __name__ == '__main__':
     start = time.time()
-    data = main('HIRAM', experiments=['control'], storm_type='C15w', year_range=range(101, 110), num_storms=None, storage=True)
+    data = main('HIRAM', experiments=['control'], storm_type='C15w', year_range=range(151, 152), 
+                num_storms=10, storage=False)
     print('Elapsed total runtime: {0:.3f}s'.format(time.time() - start))
 
 # Note to self
