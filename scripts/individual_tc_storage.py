@@ -231,7 +231,7 @@ def retrieve_tracked_TCs(dirname, storm_type, year_range, basins=None):
     # Initialize empty duration column to populate iteratively
     data[['duration', 'speed', 'direction']] = np.nan
     # Initialize list to populate iteratively for each storm, then concatenate
-    storms = []
+    storms = {}
     # Iterate through each unique storm (identify by 'storm_id') and get duration
     for storm_id in data['storm_id'].unique():
         # Define iterand storm
@@ -273,28 +273,15 @@ def retrieve_tracked_TCs(dirname, storm_type, year_range, basins=None):
         velocity['time'] = pd.to_datetime(velocity['time'])
         # Merge the storm and velocity DataFrames
         storm = storm.merge(velocity, how='left', on='time', suffixes=['_x', None]).drop(columns={'speed_x', 'direction_x'}).reset_index(drop=True)
+        # Rename columns for future addition into xArray Dataset, and reset index
+        storm = storm.rename(columns={'lon': 'center_lon', 'lat': 'center_lat', 'flag': 'core_temp', 'slp': 'min_slp'}).reset_index(drop=True)
         # Append to the list for future concatenation
-        storms.append(storm)
+        storms[storm_id] = storm
         
     # Concatenate DataFrames
-    data = pd.concat(storms)   
-    # Rename columns for future addition into xArray Dataset, and reset index
-    data = data.rename(columns={'lon': 'center_lon', 'lat': 'center_lat', 'flag': 'core_temp', 'slp': 'min_slp'}).reset_index(drop=True)
-    # Drop high-latitude storms
-    data = data.loc[abs(data['center_lat']) >= 30]
-
-    # Select specific basins, if option is chosen
-    if basins:
-        basin_dict = {}
-        for basin in basins:
-            if basin == 'EP':
-                # Only get EPAC storms
-                basin_dict[basin] = data.where((data['center_lat'] > 0) & 
-                                               (data['center_lat'] < 40) &
-                                               (data['center_lon'] > 220) &
-                                               (data['center_lon'] <= 285)).dropna()
+    data = pd.concat(storms.values())   
     
-    return data
+    return data, storms
 
 def pull_gcm_data(dirname, year, output_type):
     
@@ -341,93 +328,6 @@ def retrieve_model_data(model, dirname, year_range, output_type='atmos_month', b
     
     return data
 
-def retrieve_daily_data(dirname, model_output, storm_ids, output_type='atmos_daily', reference_time='lmi', offset=0, benchmarking=False):
-    
-    '''
-    Method to open experiment-specific GCM daily output data specific to TC dates and locations.
-    Time selection dependent on chosen reference time (genesis or LMI) and corresponding offset from the reference time.
-    
-    Input(s):
-    - dirname (str):                   directory name for the given model and experiment type.
-    - model_output (Pandas DataFrame): Pandas DataFrame with TC track data.
-    - output_type (str):               string denoting GCM output desired.
-    - reference_time (str):                      string denoting reference time desired ('genesis' or 'LMI').
-    - offset (int):                    number of 6-hour periods offset from the reference time.
-    Output(s):
-    - ds (xArray Dataset):             xArray Dataset containing concatenated data, TC-specific.
-    - ds_clim (xArray Dataset):        xArray Dataset containing concatenated data, global for specific variables.
-    '''
-    
-    if benchmarking:
-        start = time.time()
-    
-    # Spatial extent of clipping around TCs
-    extent = 15
-    # Initialize lists to hold dates
-    ds, ds_clim = [], []
-    # Define range of storm IDs to iterate over. 
-    # If 'random_num' is defined, get that many randomized storms. Otherwise, get all.
-    # storm_ids = random.sample(list(model_output['storm_id'].unique()), random_num) if random_num else model_output['storm_id'].unique()
-    # for each storm in the DataFrame
-    for storm_id in storm_ids:
-        # Get data for the iterand storm
-        storm = model_output.loc[model_output['storm_id'] == storm_id]
-        # If genesis, get index of the first time
-        if reference_time == 'genesis':
-            index = storm.drop_duplicates(subset=['storm_id'], keep='first')
-            # get date corresponding to the index chosen in the conditional and apply offset
-            date = pd.to_datetime(index.time.values) + datetime.timedelta(hours=offset*6)
-        # If LMI (lifetime maximum intensity), get index of the maximum wind and, subsequently, minimum pressure
-        elif reference_time == 'lmi':
-            index = storm.loc[storm['max_wind'] == storm['max_wind'].max()]
-            if len(index) > 1:
-                index = index.loc[index['min_slp'] == index['min_slp'].min()]
-                # get date corresponding to the index chosen in the conditional and apply offset
-                date = pd.to_datetime(index.time.values) + datetime.timedelta(hours=offset*6)
-        # Else, get all timestamps.
-        else:
-            index = storm
-        # Get date corresponding to the index chosen in the conditional and apply offset
-        dates = pd.to_datetime(index.time.values) + datetime.timedelta(hours=offset*6)
-        
-        # Convert from regular to cftime date (hour 12 used to match model output data convention)
-        if date.year > 2050:
-            cfdates = [cftime.DatetimeNoLeap(year=date.year-500, month=date.month, day=date.day, hour=12)
-                       for date in dates]
-        else:
-            cfdates = [cftime.DatetimeNoLeap(year=date.year-1900, month=date.month, day=date.day, hour=12)
-                       for date in dates]
-        
-        # Identifier substring definition. This will be used for splitting the filename for identification purposes.
-        substring = '0101.'
-        # Define file name
-        fname = [os.path.join(dirname, file) for file in os.listdir(dirname) if str(cfdates[0].year) in file.split(substring)[0] and output_type in file][0]
-        # Pull data
-        try:
-            temp = xr.open_dataset(fname).sel(time=cfdates)
-        except:
-            pass
-        # Clip spatially with extent larger than storm radius to understand surrounding environment
-        try:
-            temp = temp.sel(grid_xt=np.arange(index['center_lon'].values-extent, index['center_lon'].values+extent), 
-                            grid_yt=np.arange(index['center_lat'].values-extent, index['center_lat'].values+extent), method='nearest')
-            # Append to list for future concatenation
-            ds.append(temp)
-        except:
-            pass
-        # For large-scale, pare down the data to specific variables
-        clim_vars = ['precip']
-        temp_clim = xr.open_dataset(fname)[clim_vars]
-        ds_clim.append(temp_clim)
-    # concatenate
-    ds = xr.concat(ds, dim='time')
-    ds_clim = xr.concat(ds_clim, dim='time')
-    
-    if benchmarking:
-        print('\t Model data retrieval time: {0:.3f} s'.format(time.time() - start))
-        
-    return ds, ds_clim
-
 def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_type='atmos_daily', extent=15, num_storms=None, reference_time=None):
 
     # This boolean controls what frequency data is pulled at. Default to daily to allow for azimuthal compositing of vertical fields.
@@ -446,10 +346,12 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
         data = xr.open_mfdataset(files)
 
     # Initialize list to hold each storm Dataset for future concatenation
-    storms_xr = []
+    storms_xr = {}
     # Define range of storm IDs to iterate over. 
     # If 'random_num' is defined, get that many randomized storms. Otherwise, get all.
     storm_ids = random.sample(list(storms['storm_id'].unique()), len(list(storms['storm_id'].unique())))
+    # Container for list of storm IDs for processed storms
+    output_ids = []
 
     print('\t ', storm_ids)
     print('\t Number of storms to be processed: {0}'.format(len(storm_ids)))
@@ -458,7 +360,8 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
     # Access model data that are specific to each tracked TC.
     for storm_index, storm_id in enumerate(storm_ids):
         print('\t \t', storm_index, storm_id, storm_counter, num_storms)
-        if storm_counter > num_storms:
+        # Limit number of storms read if a limit is given
+        if num_storms and (storm_counter > num_storms):
             break
         # Pull tracked TC data relative to storm
         storm = storms.loc[storms['storm_id'] == storm_id]
@@ -467,7 +370,7 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
         
         ''' Pre-process filters. '''
         # 1. Ensure LMI occurs below a prescribed latitude
-        if abs(lmi['center_lat'].values) >= 40:
+        if abs(lmi['center_lat'].values) >= 30:
             print('\t \t \t LMI occurs too far poleward for {0}, skipping...'.format(storm_id))
             continue
         # 2. Ensure LMI is not the first timestamp - this implies that it's a baroclinic storm.
@@ -602,210 +505,12 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
             clip_container.append(temp_snapshot)
             print(temp_snapshot.time.values)
         clip_container = xr.concat(clip_container, dim='time').drop_duplicates(dim='time')
-        storms_xr.append(clip_container)
+        storms_xr[storm_id] = clip_container
+        output_ids.append(storm_id)
         print('\t Append success for ', storm_id, clip_container.time.values)
         storm_counter += 1
-        
-    # Concatenate into single xArray Dataset
-    # storms_xr = xr.concat(storms_xr, dim='time')
     
-    return storms_xr, storm_ids
-
-def radius_estimate(storm, box, overlay_check=True, benchmarking=False, troubleshooting=True):
-    
-    '''
-    Algorithm to estimate the radius of a TC based on filters set below.
-    Returns a radius in meters.
-    
-    Note 1: the idea here is: 
-            (1) regrid data to higher resolution by interpolation, 
-            (2) smooth data and use gradient-based filtering to prevent dual-vortex identification,
-            (3) identify thresholds for value-based filtering,
-            (4) use gradient- and value-based filtering to identify data points that match criteria,
-            (5) clip data and estimate radius from filtered data
-    '''
-    
-    if benchmarking:
-        start = time.time()
-    
-    # Ensure that only one timestamp is in the Dataset
-    try:
-        storm = storm.isel(time=0)
-    except:
-        storm = storm
-    
-    # Derives horizontal wind speed (proxy for azimuthal wind)
-    if 'U' not in storm.data_vars.keys():
-        # Handle data from 'atmos_4xdaily' files
-        if storm.attrs['filename'].split('.')[0] == 'atmos_4xdaily':
-            storm['U'] = np.sqrt(storm['u_ref']**2 + storm['v_ref']**2)
-        # Handle data from 'atmos_daily' files
-        elif storm.attrs['filename'].split('.')[0] == 'atmos_daily':
-            # Get wind data from the lowest vertical level
-            storm['U'] = np.sqrt(storm['ucomp'].isel(pfull=-1)**2 + storm['vcomp'].isel(pfull=-1)**2)
-        
-    if benchmarking:
-        print('\t \t Dataset checks: {0:.3f} s'.format(time.time() - start))
-        lap = time.time()
-
-    # Troubleshooting boolean added to prevent radius addition to see if it allows more weak TCs to be identified
-    if troubleshooting: 
-        return storm
-    else:
-        ''' Perform linear interpolation to allow for better gradient estimation for future filtering. '''
-        # Pull numerical data from parameters relevant to radius estimation
-        params = ['grid_xt', 'grid_yt', 'vort850', 'tm', 'slp', 'U']
-        # Define the interpolation resolution (in degrees) and spatial extent of clipping
-        resolution, extent = 0.5, 15
-        # Define dictionary to store data in
-        params = {param: [] for param in params}
-        # Iterate through parameters and interpolate
-        for param in params.keys():
-            if param == 'grid_xt':
-                params[param] =  np.arange(storm['center_lon'] - extent, storm['center_lon'] + extent, resolution)
-            elif param == 'grid_yt':
-                params[param] =  np.arange(storm['center_lat'] - extent, storm['center_lat'] + extent, resolution)
-            else:
-                params[param] = storm[param].interp(grid_xt=np.arange(storm['center_lon'] - extent, storm['center_lon'] + extent, resolution), 
-                                                    grid_yt=np.arange(storm['center_lat'] - extent, storm['center_lat'] + extent, resolution),
-                                                    method='nearest').values
-    
-        if debug:
-            # Print center and storm bounds to ensure center is within bounds
-            print('x: ', params['grid_xt'].min() < storm['center_lon'] < params['grid_xt'].max())
-            print('y: ', params['grid_yt'].min() < storm['center_lat'] < params['grid_yt'].max())
-        
-        if benchmarking:
-            print('\t \t Interpolation elapsed time: {0:.3f} s'.format(time.time() - lap))
-            lap = time.time()
-            
-        ''' 
-        Data smoothing and gradient filtering algorithm. 
-        The idea here is to use gradients for a chosen field to isolate TC extent and prevent dual-vortex pickup for a given storm, 
-        which distorts radius calculation. 
-        '''
-        # 1 hPa/deg pressure gradient (attempt at similarity to Harris)
-        diff_var, diff_val = 'slp', 1*resolution
-        # Use a 1-sigma Gaussian smoothing filter
-        smoothed = scipy.ndimage.gaussian_filter(np.abs(np.diff(np.diff(params[diff_var], axis=0), axis=1)), sigma=1)
-        # Apply the filter and resize such that filter boolean array shape matches the data array shape
-        diff_filter = smoothed > diff_val
-        diff_filter = np.hstack((diff_filter, np.full((diff_filter.shape[0], 1), False)))
-        diff_filter = np.vstack((diff_filter, np.full((1, diff_filter.shape[1]), False)))
-        
-        if benchmarking:
-            print('\t \t Data smoothing and filter definition: {0:.3f} s'.format(time.time() - lap))
-            lap = time.time()
-        
-        ''' Apply thresholds to absolute values of identified parameters. '''
-        # Define number of standard deviations to analyze
-        sigma = 1
-        # Exact magnitude thresholds
-        filters = {'vort850': np.abs(params['vort850']) > 1e-4,
-                   'tm': params['tm'] > (np.nanmean(params['tm']) + sigma*np.nanstd(params['tm'].std())),
-                   'slp': params['slp'] < 1005,
-                   'U': params['U'] >= 5}
-    
-        
-        ''' Perform the filtering and associated array clipping. '''
-        # Define the conditional based on the threshold and gradient filters
-        conditional = (filters['slp'] & filters['U'])
-        # Define variable for filtering on
-        filter_var = 'slp'
-        # Perform filtering based on chosen variable
-        filtered = np.where(conditional, params[filter_var], np.nan)
-        
-        # Crop all-nan rows in the zonal and meridional (x- and y-) array axes
-        crop_x, crop_x_idx = filtered[~np.all(np.isnan(filtered), axis=1), :], ~np.all(np.isnan(filtered), axis=1)
-        crop_y, crop_y_idx = crop_x[:, ~np.all(np.isnan(crop_x), axis=0)], ~np.all(np.isnan(crop_x), axis=0)
-        # Output masked array for visualization of algorithm output
-        arr = np.ma.masked_values(filtered, np.nan)
-        
-        if benchmarking:
-            print('\t \t Filtering: {0:.3f} s'.format(time.time() - lap))
-            lap = time.time()
-        
-        ''' Derive radius, if the filtered array is not empty. '''
-        # If filtering results in populated output array, get a radius
-        if crop_y.shape != (0, 0):
-            # If there's a mismatch in grid sizes, crop the larger one
-            if params['grid_xt'].shape != params['grid_yt'].shape:
-                if params['grid_xt'].shape[0] > params['grid_yt'].shape[0]:
-                    cut = params['grid_yt'].shape[0]
-                    # Perform the slicing
-                    params['grid_xt'] = params['grid_xt'][:cut]
-                    crop_y_idx = crop_y_idx[:cut]
-                else:
-                    cut = params['grid_xt'].shape[0]
-                    # Perform the slicing
-                    params['grid_yt'] = params['grid_yt'][:cut]
-                    crop_x_idx = crop_x_idx[:cut]
-                    
-            # Get the longitude and latitude extrema corresponding to the filtered array
-            lons = np.min(params['grid_xt'][crop_x_idx]), np.max(params['grid_xt'][crop_x_idx])
-            lats = np.min(params['grid_yt'][crop_y_idx]), np.max(params['grid_yt'][crop_y_idx])
-            # Get the coordinate extrema for radius derivation
-            coords = [lons[0], lats[0]], [lons[1], lats[1]]
-            # Derive radius from coordinate pairs (divide by 2 and divide by 1000 to go from diameter to radius and m to km)
-            radius = coords_to_dist(coords[0], coords[1])/2000
-            # Add radius to the storm Dataset
-            storm['radius'] = radius
-            
-            if benchmarking:
-                print('\t \t Radius derivation: {0:.3f} s'.format(time.time() - lap))
-                lap = time.time()
-            
-            # Overlay the storm size algorithm output on maps of the storms 
-            if overlay_check:
-                # Define the plot basics
-                fig, ax = plt.subplots(subplot_kw={'projection': ccrs.PlateCarree()})
-                ax.coastlines()
-                ax.set_extent([storm['center_lon']-extent, storm['center_lon']+extent, storm['center_lat']-extent, storm['center_lat']+extent])
-                # Plot data
-                im = ax.contourf(params['grid_xt'][:-1], params['grid_yt'][:-1], smoothed, levels=16)
-                ax.pcolormesh(params['grid_xt'], params['grid_yt'], arr[:-1, :-1], 
-                              zorder=9, cmap='Reds', transform=ccrs.PlateCarree())
-                # Plot metadata
-                ax.set_title('radius: {0:.2f} km'.format(radius))
-                fig.colorbar(im)
-                
-            return storm
-        # Else, return nan
-        else: 
-            print('\t Unable to get radius for {0}'.format(storm['storm_id'].values))
-            print('------------------------------------------------')
-            print(storm)
-            print('------------------------------------------------')
-            return np.nan
-        
-def add_radius(storms, test_num=None, benchmarking=False):
-    
-    start = time.time()
-    
-    samples = random.sample(list(set(storms['storm_id'].values)), test_num) if test_num else list(set(storms['storm_id'].values))
-
-    container = []
-    # Embarrassingly parallel
-    for storm_id in samples:
-        
-        if benchmarking:
-            lap = time.time()
-        
-        storm = storms.where(storms['storm_id'] == storm_id, drop=True).load()
-        
-        storm = storm.dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
-        storm = radius_estimate(storm, box=10, overlay_check=False, benchmarking=False)
-        
-        if benchmarking:
-            print('\t \t Dropping method: {0:.3f} s'.format(time.time() - lap))
-
-        if 'xarray' in str(type(storm)):
-            container.append(storm)
-    storms = xr.concat(container, dim='time')
-    
-    print('Radius estimation runtime per storm: {0:.3f} s'.format((time.time() - start)/len(samples)))
-    
-    return storms
+    return storms_xr, output_ids
 
 def vertical_profile_selection(storms, model, experiment):
 
@@ -818,7 +523,7 @@ def vertical_profile_selection(storms, model, experiment):
     container = {}
 
     # Iterate over each storm xarray Dataset
-    for storm in storms:
+    for storm in storms.values():
         print('Storm ID: {0}'.format(storm['storm_id']))
         # Get unique storm ID. Skip if more than one is found.
         storm_ids = list(set(storm['storm_id'].values))
@@ -866,104 +571,7 @@ def vertical_profile_selection(storms, model, experiment):
         # Concatenate all timestamps
         container[storm_id] = xr.concat(output, dim='time')
 
-    # output = xr.concat(container, dim='time')
-
-    # return output
-
-def rel_hum(data):
-    ''' 
-    Calculate relative humidity (H) as a function of atmospheric pressure, specific humidity, and temperature.
-
-    H = e(p, q)/e_s(T)
-    e = p/(eps/q - e + 1) # see Emanuel (1994), Eq. 4.1.4
-    e_s = 6.112*exp(17.67*t/(t+243.5)) # see Bolton (1980), Eq. 10. 
-    
-    Bolton (1980) doi: https://doi.org/10.1175/1520-0493(1980)108<1046:TCOEPT>2.0.CO;2
-    ''' 
-
-    p, q, t = data.pfull, data['sphum'], data['temp']
-
-    eps = 0.622 # ratio of R_d to R_v
-    e = p/(eps/q - eps + 1)
-
-    tc = t - 273.16
-    e_s = 6.112*np.exp(17.67*tc/(tc + 243.5))
-
-    data['rh'] = 100*e/e_s
-    print((100*e/e_s).shape)
-    data['rh'].attrs['long_name'] = 'relative humidity'
-    data['rh'].attrs['units'] = '%'
-
-    return data
-
-def moisture_flux(data):
-    ''' 
-    Calculate moisture convergence.
-    ''' 
-
-    du_dx = data['ucomp'].diff(dim='grid_xt')
-    dv_dy = data['vcomp'].diff(dim='grid_yt')
-    dq_dx = data['sphum'].diff(dim='grid_xt')
-    dq_dy = data['sphum'].diff(dim='grid_yt')
-    
-    data['moisture_adv'] = (du_dx + dv_dy)*data['sphum']
-    data['moisture_adv'].attrs['long_name'] = 'horizontal moisture advection'
-    data['moisture_adv'].attrs['units'] = 's^-1'
-    
-    data['moisture_div'] = dq_dx*data['ucomp'] + dq_dy*data['vcomp']
-    data['moisture_div'].attrs['long_name'] = 'horizontal moisture divergence'
-    data['moisture_div'].attrs['units'] = 's^-1'
-    
-    data['moisture_flux'] = data['moisture_div'] + data['moisture_adv']
-    data['moisture_flux'].attrs['long_name'] = 'horizontal moisture flux'
-    data['moisture_flux'].attrs['units'] = 's^-1'
-    
-    return data
-
-def radial_tangential_velocity(data, x, y, R):
-    '''
-    Calculate radial and tangential velocity components from zonal and meridional velocities.
-    '''
-
-    u, v = data['ucomp'], data['vcomp']
-
-    if np.nanmin(data.grid_yt) < 0:
-        u, v = -u, -v
-    
-    theta = np.arctan(v/u)
-    data['v_radial'] = (u*x + v*y)/R
-    data['v_tangential'] = (v*x - u*y)/R
-    
-    data['v_radial'].attrs = {'long_name': 'radial velocity', 'units': 'm s$^{-1}$'}
-    data['v_tangential'].attrs = {'v_tangential': 'tangential velocity', 'units': 'm s$^{-1}$'}
-    
-    return data
-
-def domain_temp_anomaly(data):
-
-    data['temp_anom'] = data['temp'] - data['temp'].isel(time=0).mean(dim='grid_xt').mean(dim='grid_yt')
-    
-    data['temp_anom'].attrs = {'long_name': 'domainwise temperature anomaly', 'units': 'K'}
-
-    return data    
-
-def differences(data, param, mode='relative', data_type='atmos_month', months=[1, 12]):
-
-    ctl, exp = [data['control'][param].sel(time=((data['control'].time.dt.month >= min(months)) & 
-                                                 (data['control'].time.dt.month < max(months)))).mean(dim='time').load(),
-                data['swishe'][param].sel(time=((data['swishe'].time.dt.month >= min(months)) &
-                                                (data['swishe'].time.dt.month < max(months)))).mean(dim='time').load()]
-    
-    diff = (exp - ctl) if mode == 'absolute' else (100*(exp - ctl)/(exp + ctl))
-
-    # Custom parameter bounds
-    if mode == 'relative':
-        if param in ['precip', 'evap', 'netrad_toa']:
-            diff = diff.where(abs(diff) <= 25)
-        else:
-            diff = diff.where(abs(diff) <= 100)
-
-    return diff
+    return container
 
 def output_storage(data, models, experiments, storm_type, year_range):
     ''' Method to store processed data, TC-specific. '''
@@ -985,41 +593,56 @@ def output_storage(data, models, experiments, storm_type, year_range):
                 with open(output_path, 'wb') as f:
                     pickle.dump(data[model][experiment], f, protocol=pickle.HIGHEST_PROTOCOL)
 
-def main(model, experiments, storm_type, year_range, num_storms, storage=False):
+def main(model, experiments, storm_type, year_range, num_storms, storage=False, override=False):
 
     data = {model: {}}
     
     # Iterate over experiments to load and process data
     for experiment_num, experiment in enumerate(experiments):
-        data[model][experiment] = {}
+        # data[model][experiment] = {}
         # Define paths to model- and experiment-specific data.
         model_dir, track_dir = dirnames(model, experiment)
     
         # For a given year:
         for year in year_range:
+            data[model][experiment] = {}
             years = [year, year+1]
             print('\n-----------------------------------------------------------------------')
             print('Processing year: {0}'.format(year))
-            # Get model data
+            # Get model data for future use in TC processing
             model_output = retrieve_model_data(model, model_dir, year_range=years, output_type='atmos_4xdaily')
-            # Get tracked TCs
-            storm_track_output = retrieve_tracked_TCs(track_dir, storm_type, year_range=years, basins=None)
+            # Get tracked TCs from Lucas Harris' TC tracker
+            track_output, storm_track_output  = retrieve_tracked_TCs(track_dir, storm_type, year_range=years, basins=None)
             # Pair model data to tracked TC for entire storm lifetime
-            storm_model_output, storm_ids = retrieve_model_TCs(model_dir, (min(year_range), max(year_range)), storm_track_output,
-                                                               model_output, output_type='atmos_4xdaily', num_storms=num_storms)
+            storm_model_output, storm_ids = retrieve_model_TCs(model_dir, (min(year_range), max(year_range)), 
+                                                       track_output, model_output, output_type='atmos_4xdaily', num_storms=num_storms)
             # Pair vertical model data to tracked TC for entire storm lifetime
-            # vertical_storm_output = vertical_profile_selection(storm_model_output, model, experiment)
+            vertical_storm_output = vertical_profile_selection(storm_model_output, model, experiment)
             
-            data[model][experiment]['track_output'] = storm_track_output
-            data[model][experiment]['tc_model_output'] = storm_model_output
-            # data[model][experiment]['tc_vertical_output'] = vertical_storm_output
-            
+            for storm_id in storm_ids:
+                data[model][experiment][storm_id] = {}
+                data[model][experiment][storm_id]['track_output'] = storm_track_output[storm_id]
+                data[model][experiment][storm_id]['tc_model_output'] = storm_model_output[storm_id]
+                data[model][experiment][storm_id]['tc_vertical_output'] = vertical_storm_output[storm_id]
+                data[model][experiment][storm_id]['run_name'] = model_dir
+
+                # Storage for each individual storm
+                if storage:
+                    # Define directory name and file name
+                    storage_dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs'
+                    storage_filename = 'TC-{0}-{1}-{2}-{3}.pkl'.format(model, experiment, storm_type, storm_id)
+                    storage_path = os.path.join(storage_dirname, storage_filename)
+                    # If file doesn't exist, save
+                    if not os.path.isfile(os.path.join(storage_dirname, storage_filename)) and not override:
+                        with open(os.path.join(storage_dirname, storage_filename), 'wb') as f:
+                            pickle.dump(data[model][experiment][storm_id], f)
+
     return data
 
-# if __name__ == '__main__':
-#     start = time.time()
-#     data = main('HIRAM', experiments=['control'], storm_type='C15w', year_range=[101], num_storms=3, storage=False)
-#     print('Elapsed total runtime: {0:.3f}s'.format(time.time() - start))
+if __name__ == '__main__':
+    start = time.time()
+    data = main('HIRAM', experiments=['control'], storm_type='C15w', year_range=range(101, 110), num_storms=None, storage=True)
+    print('Elapsed total runtime: {0:.3f}s'.format(time.time() - start))
 
 # Note to self
 ### Serial test run: 1 proc, 10 years, 5 storms --> 307 s
