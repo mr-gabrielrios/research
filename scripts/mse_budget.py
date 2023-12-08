@@ -111,21 +111,26 @@ def budget_timeseries_visualization(budget):
     
 def budget_planar_visualization(input, time_index=0, vertical_level=None):
     
+    ''' Data processing. '''
     # Select the corresponding temporal index for each data subset.
     data = input['tc_model_output'].isel(time=time_index).copy()
-
+    # Define the fields to be plotted by initializing a dictionary
     fields = {'dh_dt': None, 'thflx': None, 'net_lw': None, 'net_sw': None, 'vi_flux_h': None}
+    # Select data based on the fields and load them into the dictionary
     for field in fields.keys():
         fields[field] = data[field].dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
     
-    nrows, ncols = 2, len(fields.keys())
+    ''' Data visualization. '''
+    # Number of rows and columns based on field information, and initialize dictionary to hold subplot data
+    nrows, ncols, axes = 2, len(fields.keys()), {}
+    # Initialize figure
     fig = plt.figure(figsize=(3*ncols, 3))
     gs = matplotlib.gridspec.GridSpec(ncols=ncols, nrows=nrows, height_ratios=(1, 0.1))
-    
-    axes = {}
-    
+    # Iterate over each field to be plotted
     for i, item in enumerate(fields.items()):
+        # Extract data
         field, values = item
+        # Define the subplot and title it
         axes[field] = fig.add_subplot(gs[0, i])
         axes[field].set_title(field)
         
@@ -135,11 +140,16 @@ def budget_planar_visualization(input, time_index=0, vertical_level=None):
         im = axes[field].pcolormesh(fields[field].grid_xt, fields[field].grid_yt, fields[field],
                                     norm=norm, cmap=cmap)
         # Plot storm center
-        timestamp = input['tc_model_output'].isel(time=time_index).time.values.item()
+        timestamp = input['tc_model_output'].isel(time=time_index-1).time.values.item()
         timestamp = np.datetime64(datetime.datetime(year=timestamp.year+1900, month=timestamp.month, 
                                                     day=timestamp.day, hour=timestamp.hour))
         track_data = input['track_output'].loc[input['track_output'].time.values == timestamp]
-        axes[field].scatter(track_data['center_lon'], track_data['center_lat'], s=50, c='r', ec='k')
+        center_lon, center_lat = track_data['center_lon'].values, track_data['center_lat'].values
+        axes[field].scatter(center_lon, center_lat, s=50, c='r', ec='k')
+        # Control plot extent based on center data
+        extent = 7.5
+        axes[field].set_xlim([center_lon - extent, center_lon + extent])
+        axes[field].set_ylim([center_lat - extent, center_lat + extent])
         
         ''' Colorbar. '''
         # Assign axis
@@ -154,6 +164,7 @@ def budget_planar_visualization(input, time_index=0, vertical_level=None):
     # fig.suptitle(data.time.values, y=1.1)
         
 if __name__ == '__main__':
+    print('Running...')
     data = tc_processing.main('HIRAM', 'C15w', storm_id='2056-0039')
     data = budget_timeseries(data, budget_type='dh_dt')
     
