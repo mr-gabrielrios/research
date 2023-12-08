@@ -2,7 +2,7 @@
 # Analytical packages
 import numpy as np, pandas as pd, xarray as xr
 # Utilities
-import os
+import datetime, os
 # Visualization
 import cartopy, cartopy.crs as ccrs
 import matplotlib, matplotlib.pyplot as plt
@@ -27,76 +27,58 @@ def budget_timeseries(data, budget_type='h', level=500):
     eps = utilities.get_constants('eps')
     g = utilities.get_constants('g')
     
+    # Initialize list to hold individual data snapshots
+    container = []
     ''' Moist static energy (h). '''
     if budget_type == 'h':
-        # Initialize budget dictionary
-        budget = {'type': None, 'data': {}, 'attrs': None}
-        # Pre-populate data subdictionary with timestamp keys for proper time-data pairing
-        budget['data'] = {'c_p T': {}, 'gz': {}, 'L_v q': {}}
         # Iterate over each timestamp
         for timestamp in data['tc_vertical_output'].time.values:
             # Shorthand for tc_vertical_output
             iterdata = data['tc_vertical_output'].sel(time=timestamp).sel(pfull=level, method='nearest').dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
-            budget['data']['c_p T'][timestamp] = c_p*iterdata['temp']
-            budget['data']['L_v q'][timestamp] = L_v*iterdata['sphum']
-            budget['data']['gz'][timestamp] = (100*iterdata.pfull)/iterdata['rho']
-        # Append budget metadata
-        budget['type'] = budget_type
+            iterdata['c_p T'] = c_p*iterdata['temp']
+            iterdata['L_v q'] = L_v*iterdata['sphum']
+            iterdata['gz'] = (100*iterdata.pfull)/iterdata['rho']
+            container.append(iterdata)
+        data['tc_vertical_output'] = xr.concat(iterdata, dim='time')
         
     ''' Time tendency of moist static energy (dh_dt). '''
     # Define residual term - this determines which term to calculate as a residua
     residual_term = 'vi_flux_h' 
     if budget_type == 'dh_dt':
-        # Initialize budget dictionary
-        budget = {'type': None, 'data': {}, 'attrs': None}
-        # Pre-populate data subdictionary with timestamp keys for proper time-data pairing
-        if residual_term == 'vi_flux_h':
-            budget['data'] = {'thflx': {}, 'net_lw': {}, 'net_sw': {}, 'dh_dt': {}}
-        else:
-            budget['data'] = {'thflx': {}, 'net_lw': {}, 'net_sw': {}, 'vi_flux_h': {}}
         # Initialize container array for the residual term
         residual_budget = {}
+        # Define relevant budget terms
+        terms = ['dh_dt', 'thflx', 'net_lw', 'net_sw', 'vi_flux_h']
         # Iterate over each timestamp
-        # If the residual term is not dh_dt, then pre-calculate it [(h[t] - h[t-1])/dt]
-        if residual_term != 'dh_dt':
-            for t, timestamp in enumerate(data['tc_model_output'].time.values):
-                # Get h[t] (curr)
-                curr = data['tc_model_output']['vi_h'].isel(time=t)
-                # Get h[t-1] (prev) and dh_dt
-                if t > 0:
-                    prev = data['tc_model_output']['vi_h'].isel(time=(t-1))
-                    num = curr.dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all') - prev.dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
-                    den = (curr.time.values - prev.time.values).total_seconds()
-                    budget['data']['dh_dt'][timestamp] = num/den
-                    # fig, ax = plt.subplots()
-                    # budget['data']['dh_dt'][timestamp].plot(ax=ax)
-                # Fill the first timestep with nans
-                else:
-                    temp = xr.where(curr != -9999, 0, curr)
-                    budget['data']['dh_dt'][timestamp] = temp
-        # Iterate over each term
         for t, timestamp in enumerate(data['tc_model_output'].time.values):
             # Shorthand for tc_vertical_output
             iterdata = data['tc_model_output'].sel(time=timestamp)
-            for k in budget['data'].keys():
-                # Skip dh_dt, which is already in the budget
-                if k == 'dh_dt':
-                    continue
+            # Iterate over each term
+            for term in terms:
+                # Process dh_dt by using simple difference (dh_dt = (h[t] - h[t-1])/(time[t] - time[t-1]))
+                if term == 'dh_dt':
+                    # Get h[t] (curr)
+                    curr = data['tc_model_output']['vi_h'].isel(time=t)
+                    # Get h[t-1] (prev) and dh_dt
+                    if t > 0:
+                        prev = data['tc_model_output']['vi_h'].isel(time=(t-1))
+                        num = curr.dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all') - prev.dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
+                        den = (curr.time.values - prev.time.values).total_seconds()
+                        iterdata[term] = num/den
+                        # fig, ax = plt.subplots()
+                        # budget['data']['dh_dt'][timestamp].plot(ax=ax)
+                    # Fill the first timestep with nans
+                    else:
+                         iterdata[term] = xr.where(curr != -9999, 0, curr)
                 else:
-                    budget['data'][k][timestamp] = iterdata[k].dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
+                    iterdata[term] = iterdata[term].dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
             # Calculate residual term
-            if residual_term == 'vi_flux_h':
-                residual_budget[timestamp] = budget['data']['net_lw'][timestamp] + budget['data']['net_sw'][timestamp] + \
-                    budget['data']['thflx'][timestamp] - budget['data']['dh_dt'][timestamp]
-            elif residual_term == 'dh_dt':
-                residual_budget[timestamp] = budget['data']['net_lw'][timestamp] + budget['data']['net_sw'][timestamp] + \
-                    budget['data']['thflx'][timestamp] - budget['data']['vi_flux_h'][timestamp]
-        # Integrate the residual term into the budget
-        budget['data'][residual_term] = residual_budget
-        # Append budget metadata
-        budget['type'] = budget_type
+            iterdata[residual_term] = iterdata['net_lw'] + iterdata['net_sw'] + iterdata['thflx'] - iterdata['dh_dt']
+            container.append(iterdata)
+        # Concatenate
+        data['tc_model_output'] = xr.concat(container, dim='time')
         
-    return budget
+    return data
 
 def budget_timeseries_visualization(budget):
     
@@ -127,18 +109,14 @@ def budget_timeseries_visualization(budget):
     # Format legend
     fig.legend(ncols=len(budget.keys()), frameon=False, loc='upper center', bbox_to_anchor=(0.5, 1.1))
     
-def budget_planar_visualization(budget, time_index=0):
+def budget_planar_visualization(input, time_index=0, vertical_level=None):
     
-    ''' REDO FROM THE BUDGET DECOMP METHOD AVOBE'''
-    
-    print(budget.keys())
-    
+    # Select the corresponding temporal index for each data subset.
+    data = input['tc_model_output'].isel(time=time_index).copy()
+
     fields = {'dh_dt': None, 'thflx': None, 'net_lw': None, 'net_sw': None, 'vi_flux_h': None}
     for field in fields.keys():
-        print(field)
-        for index, timestamp in enumerate(budget['data'][field].keys()):
-            if index == time_index:
-                fields[field] = budget['data'][field][timestamp].dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
+        fields[field] = data[field].dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
     
     nrows, ncols = 2, len(fields.keys())
     fig = plt.figure(figsize=(3*ncols, 3))
@@ -157,7 +135,11 @@ def budget_planar_visualization(budget, time_index=0):
         im = axes[field].pcolormesh(fields[field].grid_xt, fields[field].grid_yt, fields[field],
                                     norm=norm, cmap=cmap)
         # Plot storm center
-        # axes[field].scatter(data['center_lon'], data['center_lat'], s=50, c='r', ec='k')
+        timestamp = input['tc_model_output'].isel(time=time_index).time.values.item()
+        timestamp = np.datetime64(datetime.datetime(year=timestamp.year+1900, month=timestamp.month, 
+                                                    day=timestamp.day, hour=timestamp.hour))
+        track_data = input['track_output'].loc[input['track_output'].time.values == timestamp]
+        axes[field].scatter(track_data['center_lon'], track_data['center_lat'], s=50, c='r', ec='k')
         
         ''' Colorbar. '''
         # Assign axis
@@ -172,9 +154,7 @@ def budget_planar_visualization(budget, time_index=0):
     # fig.suptitle(data.time.values, y=1.1)
         
 if __name__ == '__main__':
-    print('')
     data = tc_processing.main('HIRAM', 'C15w', storm_id='2056-0039')
-    
-    budget = budget_timeseries(data, budget_type='dh_dt')
+    data = budget_timeseries(data, budget_type='dh_dt')
     
     
