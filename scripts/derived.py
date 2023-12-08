@@ -94,11 +94,11 @@ def mse(data, benchmarking=False):
     # Create shorthand name for vertical data
     iterdata = data['tc_vertical_output']
     # Get moist static energy
-    iterdata['mse'] = c_p*iterdata['temp'] + L_v*iterdata['sphum'] + (100*iterdata.pfull)/iterdata['rho']
-    iterdata['mse'].attrs = {'long_name': 'moist static energy', 'units': 'J kg^-1'}
+    iterdata['h'] = c_p*iterdata['temp'] + L_v*iterdata['sphum'] + (100*iterdata.pfull)/iterdata['rho']
+    iterdata['h'].attrs = {'long_name': 'moist static energy', 'units': 'J kg^-1'}
 
-    data['tc_vertical_output']['mse_anom'] = iterdata['mse'] - iterdata['mse'].mean(dim='grid_xt').mean(dim='grid_yt')
-    data['tc_vertical_output']['mse_anom'].attrs = {'long_name': 'domainwise moist static energy anomaly', 'units': 'J kg^-1'}
+    data['tc_vertical_output']['h_anom'] = iterdata['h'] - iterdata['h'].mean(dim='grid_xt').mean(dim='grid_yt')
+    data['tc_vertical_output']['h_anom'].attrs = {'long_name': 'domainwise moist static energy anomaly', 'units': 'J kg^-1'}
 
     return data
 
@@ -227,27 +227,52 @@ def vertical_integral(data, field, bottom=950, top=100, benchmarking=False):
     
     # Obtain relevant constants
     g = utilities.get_constants('g')
-    
-    # Create shorthand name for vertical data
-    iterdata = data['tc_vertical_output']
-    # Initialize container for column vertical integral
-    cvi = np.full(iterdata[field].values.shape, np.nan)
-    # Get pfull indices that are closest to specified levels
-    index_top, index_bottom = [(np.abs(data['tc_vertical_output'].pfull.values - level)).argmin() for level in [top, bottom]]
-    # Iterate over each vertical level - bottom pressure level is the second-nearest to surface
-    for j in range(index_top, index_bottom+1):
-        if benchmarking:
-            print('\t CMSE level: {0} hPa'.format(iterdata.pfull.values[j]))
-        # Mass-average (see Wing et al, 2019 - Eqn. A1) 
-        cvi[:, j, :, :] = iterdata[field].isel(pfull=j).values * 100*(iterdata.pfull.values[j] - iterdata.pfull.values[j-1])/g
-    # Sum in the vertical
-    cvi = np.where(np.nansum(cvi, axis=1) > 0, np.nansum(cvi, axis=1), np.nan)
-    # Initiate an xArray data structure to store CMSE data
-    iterdata['vi_{0}'.format(field)] = xr.DataArray(dims=['time', 'grid_yt', 'grid_xt'], data=cvi)
-    iterdata['vi_{0}'.format(field)].attrs = {'long_name': 'column-integrated {0}'.format(field), 
-                                              'units': None}
-    # Append to dataset
-    data['tc_model_output']['vi_{0}'.format(field)] = iterdata['vi_{0}'.format(field)]
+     # Trim unused dimensions
+    for drop_dim in ['bnds', 'phalf']:
+        data['tc_vertical_output'] = data['tc_vertical_output'].drop_dims(drop_dim) if drop_dim in data['tc_vertical_output'].dims else data['tc_vertical_output']
+    # Initialize container list to be concatenated over time later
+    container = []
+    # Iterate over each timestep
+    for t, timestamp in enumerate(data['tc_model_output'].time.values):
+        # Create shorthand name for vertical data
+        iterdata = data['tc_vertical_output'].sel(time=timestamp, method='nearest').dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
+        # Align dimensions to ensure uniformity
+        iterdata = iterdata.transpose('pfull', 'grid_yt', 'grid_xt')
+        # Initialize container for column vertical integral
+        cvi = np.full(iterdata[field].values.shape, np.nan)
+        # Get pfull indices that are closest to specified levels
+        index_top, index_bottom = [(np.abs(data['tc_vertical_output'].pfull.values - level)).argmin() for level in [top, bottom]]
+        # Iterate over each vertical level - bottom pressure level is the second-nearest to surface
+        for j in range(index_top, index_bottom+1):
+            if benchmarking:
+                print('\t Iterand level: {0} hPa'.format(iterdata.pfull.values[j]))
+            # Mass-average (see Wing et al, 2019 - Eqn. A1) 
+            cvi[j, :, :] = iterdata[field].isel(pfull=j).values * 100*(iterdata.pfull.values[j] - iterdata.pfull.values[j-1])
+        # Sum in the vertical
+        cvi = np.nansum(cvi, axis=0)/g
+        # Remove zeroes to allow for nan dropping
+        cvi = np.where(cvi != 0.0, cvi, np.nan)
+        # Remove zeroes to allow for nan dropping
+        cvi = np.expand_dims(cvi, axis=2)
+        # Initiate an xArray data structure to store verrtically-integrated data
+        output = xr.DataArray(dims=['grid_yt', 'grid_xt', 'time'], 
+                              coords={'grid_yt': (['grid_yt'], iterdata[field].grid_yt.values),
+                                      'grid_xt': (['grid_xt'], iterdata[field].grid_xt.values),
+                                      'time': (['time'], [timestamp])},
+                              data=cvi)
+        
+        # Plot testing to ensure output is reflected in appended quantity
+        # import matplotlib.pyplot as plt
+        # fig, ax = plt.subplots(figsize=(7, 2), ncols=2)
+        # im = ax[0].pcolormesh(cvi[:, :, 0])
+        # fig.colorbar(im)
+        # fig.suptitle('{0}: {1}'.format(t, timestamp))
+        # output.isel(time=0).plot(ax=ax[1])
+        
+        # Append
+        container.append(output)
+    # Place vertically-integrated field in the planar Dataset (tc_model_output)
+    data['tc_model_output']['vi_{0}'.format(field)] = xr.concat(container, dim='time')
     
     return data
     

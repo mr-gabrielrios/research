@@ -65,16 +65,16 @@ def derived_fields(data):
     data = derived.rh(data)
     # Add moist static energy
     data = derived.mse(data)
-    # Add column-integrated moist static energy
-    data = derived.vertical_integral(data, field='mse')
     # Columnwise net longwave radiation
     data = derived.net_lw(data)
     # Columnwise net shortwave radiation
     data = derived.net_sw(data)
     # Horizontal moisture divergence
-    data = derived.scalar_divergence(data, field='sphum')
-    # Column-integrated horizontal moisture divergence
-    data = derived.vertical_integral(data, field='flux_sphum')
+    data = derived.scalar_divergence(data, field='h')
+    # Column-integrated horizontal MSE divergence
+    data = derived.vertical_integral(data, field='flux_h')
+    # Add column-integrated moist static energy
+    data = derived.vertical_integral(data, field='h')
         
     return data
     
@@ -87,4 +87,4 @@ def main(model, storm_type, storm_id=None):
     
 if __name__ == '__main__':
     model, storm_type = 'HIRAM', 'C15w'
-    data = main(model, storm_type, storm_id='2052-0030')
+    data = main(model, storm_type, storm_id='2056-0039')
