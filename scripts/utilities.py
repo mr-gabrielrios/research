@@ -37,11 +37,11 @@ def distance_grid(data):
     distances = np.full(shape=(len(data.grid_yt), len(data.grid_xt)), fill_value=np.nan)
     for i, lat in enumerate(data.grid_yt.values):
         for j, lon in enumerate(data.grid_xt.values):
-            if i < len(data.grid_yt.values) - 1:
-                lon_next, lon_curr = data.grid_xt.values[i+1], data.grid_xt.values[i]
+            if i < (len(data.grid_yt.values) - 1) and j < (len(data.grid_xt.values) - 1):
+                lon_next, lon_curr = data.grid_xt.values[j+1], data.grid_xt.values[j]
             # Handle the boundary condition by assuming periodicity in x
             else:
-                lon_next, lon_curr = data.grid_xt.values[0], data.grid_xt.values[i]
+                lon_next, lon_curr = data.grid_xt.values[0], data.grid_xt.values[j]
             distances[i, j] = coords_to_dist((lon_curr, lat), (lon_next, lat))
     out = xr.DataArray(data=distances,
                        dims=('grid_yt', 'grid_xt'),
