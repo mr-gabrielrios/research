@@ -1,5 +1,44 @@
 import numpy as np, pandas as pd, scipy as sp, xarray as xr
-import utilities
+import os, pickle
+
+def access(model, experiment, storm_type, storm_id=None):
+    
+    """Access a random TC pickle file.
+    
+    Arguments:
+        model (str): model name (AM2.5, HIRAM, FLOR)
+        storm_type (str): TS or C15w
+        storm_id (str, default: None): ID of storm of interest
+
+    Returns:
+        data (dict): 3-element dictionary with track outputs from Lucas Harris' TC tracker, planar model outputs from the chosen GCM, and vertical outputs from the chosen GCM
+    """
+    
+    dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs'
+    files = [os.path.join(dirname, filename) for filename in os.listdir(dirname)
+            if model in filename and experiment in filename and storm_type in filename]
+    
+    # If a specific storm ID is given, check for it
+    storm_exists = False # check for storm existence - True if exists
+    if storm_id:
+        # Get list of storms that match the storm ID
+        storm_check_list = [file for file in files if storm_id in file]
+        # If the storm exists and the list length is 1, get the filename
+        if len(storm_check_list) == 1:
+            storm_exists = True
+            filename = storm_check_list[0]
+        elif len(storm_check_list) > 1:
+            print(storm_check_list)
+        
+    # Load the storm - random if no storm ID is given or found, storm ID if given and found
+    if storm_exists:
+        with open(filename, 'rb') as f:
+            data = pickle.load(f)
+    else:
+        with open(random.choice(files), 'rb') as f:
+            data = pickle.load(f)
+        
+    return data
 
 def get_constants(name):
     
@@ -75,3 +114,10 @@ def domain_differentiation(data, distance, field, dim):
         b_ = b.values[:, :, np.newaxis, :]
         c = xr.DataArray(data=np.concatenate((a.values, b_), axis=2), dims=a.dims)
     return c
+
+def compositor(model, experiment, intensity_range):
+    """
+    Method to generate composite for a given set of parameters from offloaded model data (.pkl files)
+    """
+    
+    
