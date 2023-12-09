@@ -49,9 +49,15 @@ def tc_storage(model, experiment, year_range, storm_type, random_num=None, bench
         print('Track access time: {0:.3f} s'.format(time.time() - lap))
         lap = time.time()
     
+    # Define output type based on storage conventions
+    if model == 'HIRAM' and min(year_range) >= 157:
+        output_type = 'atmos_8xdaily'
+    else:
+        output_type = 'atmos_4xdaily'
+    
     # Retrieve model data over specified year range. 
     # This is here so that both TC-specific and associated global model data can be analyzed together.
-    model_output = retrieve_model_data(model, model_dir, year_range=(min(year_range), max(year_range)), output_type='atmos_4xdaily', benchmarking=benchmarking)
+    model_output = retrieve_model_data(model, model_dir, year_range=(min(year_range), max(year_range)), output_type=output_type, benchmarking=benchmarking)
     
     if benchmarking:
         print('Model output access time: {0:.3f} s'.format(time.time() - lap))
@@ -60,7 +66,7 @@ def tc_storage(model, experiment, year_range, storm_type, random_num=None, bench
     # Retrieve model data specified to tracked TCs.
     # Note: default model output type is 'atmos_4xdaily'. If 'output_type' matches 'model_output', then access pre-loaded data from 'model_output'.
     storm_model_output, storm_ids = retrieve_model_TCs(model_dir, (min(year_range), max(year_range)), storm_track_output, 
-                                                       model_output, output_type='atmos_4xdaily', random_num=random_num)
+                                                       model_output, output_type=output_type, random_num=random_num)
     
     if benchmarking:
         print('TC accessing output access time: {0:.3f} s'.format(time.time() - lap))
@@ -352,6 +358,9 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
         storm = storms.loc[storms['storm_id'] == storm_id]
         # Find timestamp corresponding to storm LMI. LMI is defined as timestamp with maximum wind.
         lmi = storm.loc[storm['max_wind'] == storm['max_wind'].max()] 
+        # Check for multiple instances of LMI - if multiple exist, get instance with lowest pressure
+        if len(lmi) > 1:
+            lmi = lmi.loc[lmi['min_slp'] == lmi['min_slp'].min()]
         
         ''' Pre-process filters. '''
         # 1. Ensure LMI occurs below a prescribed latitude
@@ -361,6 +370,10 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
         # 2. Ensure LMI is not the first timestamp - this implies that it's a baroclinic storm.
         if lmi['time'].values == storm.sort_values('time').iloc[0]['time']:
             print('\t \t \t LMI occurs at first timestamp, skipping...'.format(storm_id))
+            continue
+        # 3: Ensure last TC timestamp is before 12/31 to avoid year-to-year overruns
+        if storm['time'].max().month == 12 and storm['time'].max().day > 30:
+            print('\t \t \t TC overruns into next year, skipping...'.format(storm_id))
             continue
         
         # Initialize list to hold Dataset entries for each storm timestamp
@@ -497,7 +510,7 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
     
     return storms_xr, output_ids
 
-def vertical_profile_selection(storms, model, experiment):
+def vertical_profile_selection(storms, model, experiment, output_type='atmos_daily'):
 
     '''
     Arguments:
@@ -537,7 +550,7 @@ def vertical_profile_selection(storms, model, experiment):
             # Get path name corresponding to model and experiment
             model_dir, _ = dirnames(model, experiment)
             # Pull full vertical output and select corresponding day
-            vertical_profile = xr.open_dataset('{0}/{1:04d}0101.atmos_daily.nc'.format(model_dir, timestamp.year))
+            vertical_profile = xr.open_dataset('{0}/{1:04d}0101.{2}.nc'.format(model_dir, timestamp.year, output_type))
             # Filter by time and spatial domain
             try:
                 vertical_profile = vertical_profile.sel(time=timestamp, 
@@ -595,14 +608,15 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
             print('\n-----------------------------------------------------------------------')
             print('Processing year: {0}'.format(year))
             # Get model data for future use in TC processing
-            model_output = retrieve_model_data(model, model_dir, year_range=years, output_type='atmos_4xdaily')
+            output_type = 'atmos_8xdaily' if model == 'HIRAM' and year >= 157 else 'atmos_4xdaily'
+            model_output = retrieve_model_data(model, model_dir, year_range=years, output_type=output_type)
             # Get tracked TCs from Lucas Harris' TC tracker
             track_output, storm_track_output  = retrieve_tracked_TCs(track_dir, storm_type, year_range=years, basins=None)
             # Pair model data to tracked TC for entire storm lifetime
             storm_model_output, storm_ids = retrieve_model_TCs(model_dir, (min(year_range), max(year_range)), 
-                                                       track_output, model_output, output_type='atmos_4xdaily', num_storms=num_storms)
+                                                       track_output, model_output, output_type=output_type, num_storms=num_storms)
             # Pair vertical model data to tracked TC for entire storm lifetime
-            vertical_storm_output = vertical_profile_selection(storm_model_output, model, experiment)
+            vertical_storm_output = vertical_profile_selection(storm_model_output, model, experiment, output_type=output_type)
             
             for storm_id in storm_ids:
                 data[model][experiment][storm_id] = {}
@@ -626,8 +640,8 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
 
 if __name__ == '__main__':
     start = time.time()
-    data = main('HIRAM', experiments=['control'], storm_type='C15w', year_range=range(151, 152), 
-                num_storms=10, storage=False)
+    data = main('HIRAM', experiments=['control'], storm_type='C15w', year_range=[157], 
+                num_storms=5, storage=True, override=True)
     print('Elapsed total runtime: {0:.3f}s'.format(time.time() - start))
 
 # Note to self
