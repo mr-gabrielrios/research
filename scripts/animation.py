@@ -14,7 +14,7 @@ warnings.filterwarnings("ignore")
 
 from colormap_normalization import get_cmap, norm_cmap
 
-def retrieve_tracked_TCs(dirname, storm_type, year_range=(101, 125)):
+def retrieve_tracked_TCs(dirname, storm_type, year_range=(101, 250)):
 
     '''
     Function to collect tracked TC data and add derived data, such as duration and storm speed.
@@ -183,7 +183,6 @@ def access(model_name='HIRAM', experiment='control', storm_category='C15w'):
     
     model_run_dirname = '/tiger/scratch/gpfs/GEOCLIM/gr7610/{0}/work'.format(model_name)
     
-    file_type = 'atmos_4xdaily'
     dirname_modifier = ''
     if model_name in ['AM2.5', 'HIRAM']:
         npes = '540PE' 
@@ -195,8 +194,6 @@ def access(model_name='HIRAM', experiment='control', storm_category='C15w'):
     
     experiment_names = {'control': 'CTL1990s_{0}tigercpu_intelmpi_18_{1}'.format(dirname_modifier, npes),
                         'swishe': 'CTL1990s_swishe_{0}tigercpu_intelmpi_18_{1}'.format(dirname_modifier, npes)}
-    
-    storm_categories = ['TS', 'C15w']
     
     # Populate dictionary
     experiment_dirname = os.path.join(model_run_dirname, experiment_names[experiment], 'POSTP')
@@ -238,9 +235,9 @@ def get_data(model_name='HIRAM', experiment='control', storm_category='C15w', st
     ''' Get 6-hourly data corresponding to storm. '''
     # Get filename matching corresponding model output.
     model_filename = [os.path.join(experiment_dirname, filename) for filename in os.listdir(experiment_dirname)
-                      if ('atmos_4xdaily' in filename) and (str(min(timestamps).year - 1900) in filename.split('/')[-1][0:4])][0]    
+                      if (('atmos_4xdaily' in filename) or ('atmos_8xdaily' in filename)) and (str(min(timestamps).year - 1900) in filename.split('/')[-1][0:4])][0]    
     print([os.path.join(experiment_dirname, filename) for filename in os.listdir(experiment_dirname)
-                      if ('atmos_4xdaily' in filename) and (str(min(timestamps).year - 1900) in filename)])
+                      if (('atmos_4xdaily' in filename) or ('atmos_8xdaily' in filename)) and (str(min(timestamps).year - 1900) in filename)])
     # Convert timestamps to cftime format for output indexing.
     timestamps = [timestamp_conversion(t) for t in timestamps]
     # Get time indices to allow for storm loading before/after tracker start/end
@@ -255,143 +252,115 @@ def get_data(model_name='HIRAM', experiment='control', storm_category='C15w', st
     
     return storm_data, model_data
 
-storm_data, model_data = get_data(model_name='HIRAM', experiment='control')
 
-plt.rcParams["animation.html"] = "jshtml"
-plt.ioff()
-plt.cla()
+def animation(model_data, storm_data, param, lon_offset=180, max_frame=None, save_video=False):
+    plt.rcParams["animation.html"] = "jshtml"
+    plt.ioff()
+    plt.cla()
 
-param = 'olr'
-proj, proj_pc = ccrs.PlateCarree(), ccrs.PlateCarree()
+    lon_offset = 180
+    proj, proj_pc = ccrs.PlateCarree(central_longitude=lon_offset), ccrs.PlateCarree()
 
-fig = plt.figure()
-gs = matplotlib.gridspec.GridSpec(nrows=1, ncols=2, width_ratios=(1, 0.03), wspace=0)
+    fig = plt.figure()
+    gs = matplotlib.gridspec.GridSpec(nrows=1, ncols=2, width_ratios=(1, 0.03), wspace=0)
 
-geo_ax = fig.add_subplot(gs[0, 0], projection=proj)
-cax_container = fig.add_subplot(gs[0, 1])
+    geo_ax = fig.add_subplot(gs[0, 0], projection=proj)
+    cax_container = fig.add_subplot(gs[0, 1])
 
-model_data['U'] = np.sqrt(model_data['u_ref']**2 + model_data['v_ref']**2)
+    model_data['U'] = np.sqrt(model_data['u_ref']**2 + model_data['v_ref']**2)
 
-def init_func():
-    frame = 0
-    geo_ax.clear()
+    def init_func():
+        frame = 0
+        geo_ax.clear()
 
-    levels = 24
-    norm, cmap = norm_cmap(model_data, param, bounds=True, n_bounds=levels+1)
-    im = geo_ax.contourf(model_data.grid_xt, model_data.grid_yt, model_data[param].isel(time=frame),
-                           norm=norm, cmap=cmap, levels=levels)
-    geo_ax.contour(model_data.grid_xt, model_data.grid_yt, model_data['U'].isel(time=frame),
-                   levels=[15, 29], cmap='Blues')
+        levels = 24
+        norm, cmap = norm_cmap(model_data, param, bounds=True, n_bounds=levels+1)
+        im = geo_ax.contourf(model_data.grid_xt, model_data.grid_yt, model_data[param].isel(time=frame),
+                            norm=norm, cmap=cmap, levels=levels, transform=proj_pc)
+        # geo_ax.contour(model_data.grid_xt, model_data.grid_yt, model_data['U'].isel(time=frame),
+        #                levels=[15, 29], cmap='Blues')
 
-    res = 15
-    center_lat, center_lon = storm_data.iloc[frame]['center_lat'], storm_data.iloc[frame]['center_lon']
+        res = 15
+        center_lat, center_lon = storm_data.iloc[frame]['center_lat'], storm_data.iloc[frame]['center_lon']
 
-    geo_ax.set_extent([center_lon - res, center_lon + res, center_lat - res, center_lat + res])
+        extent = [center_lon - res, center_lon + res, 
+                center_lat - res, center_lat + res]
+        geo_ax.set_extent(extent, proj_pc)
+        print('Extent: {0}'.format(extent))
+        
+        gridlines = geo_ax.gridlines(ls='--', alpha=0.5, crs=proj)
+        gridlines.bottom_labels = True
+        
+        geo_ax.coastlines()
+
+        storm_id = storm_data.iloc[0]['storm_id']
+        timestamp = model_data[param].isel(time=frame)['time'].values
+        max_wind, slp = storm_data.iloc[frame]['max_wnd'], storm_data.iloc[frame]['min_slp']
+        title = 'Storm ID: {0}\nTime:{1}; Coordinates: ({2:.1f}, {3:.1f})\nMaximum winds: {4:.1f} m s$^{{-1}}$; Minimum pressure: {5:.1f} hPa'.format(storm_id, timestamp,
+                                                                                                                                            center_lat, center_lon, max_wind, slp)
+        geo_ax.set_title(title, ha='left', x=0, fontsize=9)
+
+        cax_container.clear()
+        cax_container.set_axis_off()
+        cax = cax_container.inset_axes([-2, 0, 1, 1])
+        colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax)
+        colorbar_label = '{0} [{1}]'.format(model_data[param].attrs['long_name'], model_data[param].attrs['units'])
+        colorbar.set_label(colorbar_label, labelpad=20, rotation=270)
+
+    def animate(iter_frame):
+
+        storm_frame, model_frame = iter_frame, iter_frame
+        geo_ax.clear()
+
+        levels = 24
+        norm, cmap = norm_cmap(model_data, param, bounds=True, n_bounds=levels+1)
+        im = geo_ax.contourf(model_data.grid_xt, model_data.grid_yt, model_data[param].isel(time=model_frame),
+                            norm=norm, cmap=cmap, levels=levels, transform=proj_pc)
+        # geo_ax.contour(model_data.grid_xt, model_data.grid_yt, model_data['U'].isel(time=model_frame),
+        #                levels=[15, 29], cmap='Blues')
+
+        res = 15
+        center_lat, center_lon = storm_data.iloc[storm_frame]['center_lat'], storm_data.iloc[storm_frame]['center_lon']
+
+        extent = [center_lon - res, center_lon + res, 
+                center_lat - res, center_lat + res]
+        geo_ax.set_extent(extent, proj_pc)
+        print('Extent: {0}'.format(extent))
+        
+        gridlines = geo_ax.gridlines(ls='--', alpha=0.5, crs=proj)
+        gridlines.bottom_labels = True
+        
+        geo_ax.coastlines()
+
+        storm_id = storm_data.iloc[0]['storm_id']
+        timestamp = model_data[param].isel(time=model_frame)['time'].values
+        max_wind, slp = storm_data.iloc[storm_frame]['max_wnd'], storm_data.iloc[storm_frame]['min_slp']
+        title = 'Storm ID: {0}\nTime:{1}; Coordinates: ({2:.1f}, {3:.1f})\nMaximum winds: {4:.1f} m s$^{{-1}}$; Minimum pressure: {5:.1f} hPa'.format(storm_id, timestamp,
+                                                                                                                                            center_lat, center_lon, max_wind, slp)
+        geo_ax.set_title(title, ha='left', x=0, fontsize=9)
+
+        cax_container.clear()
+        cax_container.set_axis_off()
+        cax = cax_container.inset_axes([-2, 0, 1, 1])
+        colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax)
+        colorbar_label = '{0} [{1}]'.format(model_data[param].attrs['long_name'], model_data[param].attrs['units'])
+        colorbar.set_label(colorbar_label, labelpad=20, rotation=270)
+
+    animation_type = 'func'
+    frame_offset = 1
+    max_frame = max_frame if max_frame else len(storm_data)-1
+    frame_limit = max_frame if (len(storm_data)-1 > max_frame) else len(storm_data)-1
+    anim = matplotlib.animation.FuncAnimation(fig, animate, frames=range(frame_offset, frame_limit), init_func=init_func, interval=150, blit=False)
+
+    if save_video:
+        writer = animation.FFMpegWriter(fps=15) 
+        anim.save('{0}'.format(storm_data['storm_id'].iloc[0]), writer=writer) 
+    else:
+        anim
+
+def main(model_name='HIRAM', experiment='control', storm_id=None):
     
-    gridlines = geo_ax.gridlines(ls='--', alpha=0.5)
-    gridlines.bottom_labels = True
-    
-    geo_ax.coastlines()
-
-    storm_id = storm_data.iloc[0]['storm_id']
-    timestamp = model_data[param].isel(time=frame)['time'].values
-    max_wind, slp = storm_data.iloc[frame]['max_wnd'], storm_data.iloc[frame]['min_slp']
-    title = 'Storm ID: {0}\nTime:{1}; Coordinates: ({2:.1f}, {3:.1f})\nMaximum winds: {4:.1f} m s$^{{-1}}$; Minimum pressure: {5:.1f} hPa'.format(storm_id, timestamp,
-                                                                                                                                          center_lat, center_lon, max_wind, slp)
-    geo_ax.set_title(title, ha='left', x=0, fontsize=9)
-
-    cax_container.clear()
-    cax_container.set_axis_off()
-    cax = cax_container.inset_axes([-2, 0, 1, 1])
-    colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax)
-    colorbar_label = '{0} [{1}]'.format(model_data[param].attrs['long_name'], model_data[param].attrs['units'])
-    colorbar.set_label(colorbar_label, labelpad=20, rotation=270)
-
-def animate(iter_frame):
-
-    storm_frame, model_frame = iter_frame, iter_frame
-    geo_ax.clear()
-
-    levels = 24
-    norm, cmap = norm_cmap(model_data, param, bounds=True, n_bounds=levels+1)
-    im = geo_ax.contourf(model_data.grid_xt, model_data.grid_yt, model_data[param].isel(time=model_frame),
-                           norm=norm, cmap=cmap, levels=levels)
-    geo_ax.contour(model_data.grid_xt, model_data.grid_yt, model_data['U'].isel(time=model_frame),
-                   levels=[15, 29], cmap='Blues')
-
-    res = 15
-    center_lat, center_lon = storm_data.iloc[storm_frame]['center_lat'], storm_data.iloc[storm_frame]['center_lon']
-
-    geo_ax.set_extent([center_lon - res, center_lon + res, center_lat - res, center_lat + res])
-    
-    gridlines = geo_ax.gridlines(ls='--', alpha=0.5)
-    gridlines.bottom_labels = True
-    
-    geo_ax.coastlines()
-
-    storm_id = storm_data.iloc[0]['storm_id']
-    timestamp = model_data[param].isel(time=model_frame)['time'].values
-    max_wind, slp = storm_data.iloc[storm_frame]['max_wnd'], storm_data.iloc[storm_frame]['min_slp']
-    title = 'Storm ID: {0}\nTime:{1}; Coordinates: ({2:.1f}, {3:.1f})\nMaximum winds: {4:.1f} m s$^{{-1}}$; Minimum pressure: {5:.1f} hPa'.format(storm_id, timestamp,
-                                                                                                                                          center_lat, center_lon, max_wind, slp)
-    geo_ax.set_title(title, ha='left', x=0, fontsize=9)
-
-    cax_container.clear()
-    cax_container.set_axis_off()
-    cax = cax_container.inset_axes([-2, 0, 1, 1])
-    colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax)
-    colorbar_label = '{0} [{1}]'.format(model_data[param].attrs['long_name'], model_data[param].attrs['units'])
-    colorbar.set_label(colorbar_label, labelpad=20, rotation=270)
-
-def artist_animate(iter_frame):
-
-    storm_frame, model_frame = iter_frame, iter_frame
-    geo_ax.clear()
-
-    levels = 24
-    norm, cmap = norm_cmap(model_data, param, bounds=True, n_bounds=levels+1)
-    im = geo_ax.contourf(model_data.grid_xt, model_data.grid_yt, model_data[param].isel(time=model_frame),
-                           norm=norm, cmap=cmap, levels=levels)
-    geo_ax.contour(model_data.grid_xt, model_data.grid_yt, model_data['U'].isel(time=model_frame),
-                   levels=[15, 29], cmap='Blues')
-
-    res = 15
-    center_lat, center_lon = storm_data.iloc[storm_frame]['center_lat'], storm_data.iloc[storm_frame]['center_lon']
-
-    geo_ax.set_extent([center_lon - res, center_lon + res, center_lat - res, center_lat + res])
-    
-    gridlines = geo_ax.gridlines(ls='--', alpha=0.5)
-    gridlines.bottom_labels = True
-    
-    geo_ax.coastlines()
-
-    storm_id = storm_data.iloc[0]['storm_id']
-    timestamp = model_data[param].isel(time=model_frame)['time'].values
-    max_wind, slp = storm_data.iloc[storm_frame]['max_wnd'], storm_data.iloc[storm_frame]['min_slp']
-    title = 'Storm ID: {0}\nTime:{1}; Coordinates: ({2:.1f}, {3:.1f})\nMaximum winds: {4:.1f} m s$^{{-1}}$; Minimum pressure: {5:.1f} hPa'.format(storm_id, timestamp,
-                                                                                                                                          center_lat, center_lon, max_wind, slp)
-    geo_ax.set_title(title, ha='left', x=0, fontsize=9)
-
-    cax_container.clear()
-    cax_container.set_axis_off()
-    cax = cax_container.inset_axes([-2, 0, 1, 1])
-    colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax)
-    colorbar_label = '{0} [{1}]'.format(model_data[param].attrs['long_name'], model_data[param].attrs['units'])
-    colorbar.set_label(colorbar_label, labelpad=20, rotation=270)
-    
-    return fig
+    storm_data, model_data = get_data(model_name, experiment, storm_num=storm_id)
 
 
-# Animation generation and save settings
-animation_type = 'artist'
-frame_offset = 1
-max_frame = 12
-frame_limit = max_frame if (len(storm_data)-1 > max_frame) else len(storm_data)-1
-
-ims = [artist_animate(i) for i in range(0, max_frame)]
-
-if animation_type == 'func':
-    matplotlib.animation.FuncAnimation(fig, animate, frames=range(frame_offset, frame_limit), init_func=init_func, interval=150, blit=False)
-else:
-    matplotlib.animation.ArtistAnimation(fig, ims, interval=150, blit=False)
 
