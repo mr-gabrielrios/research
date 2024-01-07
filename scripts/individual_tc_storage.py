@@ -322,7 +322,7 @@ def retrieve_model_data(model, dirname, year_range, output_type='atmos_month', b
 def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_type='atmos_daily', extent=15, num_storms=None, reference_time=None):
 
     # This boolean controls what frequency data is pulled at. Default to daily to allow for azimuthal compositing of vertical fields.
-    timestamp_daily_freq = True
+    timestamp_daily_freq = False if output_type == 'atmos_8xdaily' else True
     
     # Check to see if model_output (previously-access model data) is the same output type as desired for TCs. If so, pull from that Dataset.
     if model_output and output_type == model_output.attrs['filename'].split('.')[0]:
@@ -462,6 +462,15 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
             except:
                 print('Unable to process, part 1c:', storm_id)
                 pass
+        elif output_type == 'atmos_8xdaily':
+            print('\t Using the new method!')
+            # Initialize container list of storm snapshots
+            snapshots = []
+            # Iterate over each timestamp
+            for pull_timestamp in storm_xr.time.values:
+                snapshot = storm_xr.sel(time=pull_timestamp, method='nearest')
+                snapshots.append(snapshot)
+            snapshot = xr.concat(snapshots, dim='time').drop_duplicates('time')
         else:
             snapshot = storm_xr.where(storm_xr['max_wind'] == storm_xr['max_wind'].max(), drop=True)
 
@@ -518,6 +527,10 @@ def vertical_profile_selection(storms, model, experiment, output_type='atmos_dai
     '''
     start = time.time()
 
+    # Determine output frequency
+    output_daily = True if output_type == 'atmos_daily' else False
+    print(output_type, output_daily)
+    # Initialize container dictionary
     container = {}
 
     # Iterate over each storm xarray Dataset
@@ -541,12 +554,15 @@ def vertical_profile_selection(storms, model, experiment, output_type='atmos_dai
             snapshot = snapshot.dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
             # Define bounds from xt/yt maxima
             grid_xt_bounds, grid_yt_bounds = [(snapshot.grid_xt.min(), snapshot.grid_xt.max()), (snapshot.grid_yt.min(), snapshot.grid_yt.max())]
-            # Rewrite timestamp to the corresponding day as a cftime object. Pick the nearest full day
-            if timestamp.hour <= 12:
-                timestamp = cftime.datetime(timestamp.year, timestamp.month, timestamp.day, hour=0, calendar='noleap')
-            else:
-                timestamp = timestamp + datetime.timedelta(days=1)
-                timestamp = cftime.datetime(timestamp.year, timestamp.month, timestamp.day, hour=0, calendar='noleap')
+            # Rewrite timestamp to the corresponding day as a cftime object. 
+            # Pick the nearest full day if daily data is used, otherwise use the raw time
+            if output_daily:
+                if timestamp.hour <= 12:
+                    timestamp = cftime.datetime(timestamp.year, timestamp.month, timestamp.day, hour=0, calendar='noleap')
+                else:
+                    timestamp = timestamp + datetime.timedelta(days=1)
+                    timestamp = cftime.datetime(timestamp.year, timestamp.month, timestamp.day, hour=0, calendar='noleap')
+            print('\t ---> Vertical timestamp out: {0}'.format(timestamp))
             # Get path name corresponding to model and experiment
             model_dir, _ = dirnames(model, experiment)
             # Pull full vertical output and select corresponding day
@@ -629,19 +645,24 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
                 if storage:
                     # Define directory name and file name
                     storage_dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs'
-                    storage_filename = 'TC-{0}-{1}-{2}-{3}.pkl'.format(model, experiment, storm_type, storm_id)
+                    # Define filename using max wind and min SLP for future binning
+                    max_wind, min_slp = storm_track_output[storm_id]['max_wind'].max(), storm_track_output[storm_id]['min_slp'].min()
+                    print(max_wind, min_slp)
+                    storage_filename = 'TC-{0}-{1}-{2}-{3}-max_wind-{4:0.0f}-min_slp-{5:0.0f}.pkl'.format(model, experiment, storm_type, storm_id, max_wind, min_slp)
+                    print(storage_filename)
                     storage_path = os.path.join(storage_dirname, storage_filename)
                     # If file doesn't exist, save
-                    if not os.path.isfile(os.path.join(storage_dirname, storage_filename)) and not override:
+                    if not os.path.isfile(os.path.join(storage_dirname, storage_filename)) and override:
                         with open(os.path.join(storage_dirname, storage_filename), 'wb') as f:
+                            print(os.path.join(storage_dirname, storage_filename))
                             pickle.dump(data[model][experiment][storm_id], f)
 
     return data
 
 if __name__ == '__main__':
     start = time.time()
-    data = main('HIRAM', experiments=['control'], storm_type='C15w', year_range=[157], 
-                num_storms=5, storage=True, override=True)
+    data = main('HIRAM', experiments=['control'], storm_type='C15w', year_range=range(102, 149), 
+                num_storms=10, storage=True, override=True)
     print('Elapsed total runtime: {0:.3f}s'.format(time.time() - start))
 
 # Note to self
