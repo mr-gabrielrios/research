@@ -1439,6 +1439,7 @@ contains
        write(outunit,100) 'atm%rh500', mpp_chksum(atm%rh500)
        write(outunit,100) 'atm%rh700', mpp_chksum(atm%rh700)
        write(outunit,100) 'atm%rh850', mpp_chksum(atm%rh850)
+       write(outunit,100) 'atm%swfq', mpp_chksum(atm%swfq)
        do tr = 1,n_exch_tr
           n = tr_table(tr)%atm
           if(n /= NO_TRACER ) then

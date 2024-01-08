@@ -390,7 +390,7 @@ contains
 
 
  subroutine atmosphere_up ( Time,  frac_land, Surf_diff, lprec, fprec, gust, &
-                            vort850, rh250, rh500, rh700, rh850, &
+                            vort850, rh250, rh500, rh700, rh850, swfq, &
                             u_star, b_star, q_star )
 
    type(time_type),intent(in)         :: Time
@@ -398,6 +398,7 @@ contains
    real, intent(in),  dimension(:,:)  :: frac_land
    real, intent(inout), dimension(:,:):: gust
    real, intent(inout), dimension(:,:):: vort850, rh250, rh500, rh700, rh850
+   real, intent(inout), dimension(:,:)  :: swfq
    real, intent(out), dimension(:,:)  :: lprec,   fprec
    real, intent(in), dimension(:,:)   :: u_star, b_star, q_star
 
@@ -425,7 +426,7 @@ contains
                 call timing_on('FV_DIAG')
    ! call fv_diag( Atm, zvir, fv_time, Atm(1)%print_freq )
    call fv_diag_gr( Atm, zvir, fv_time, Atm(1)%print_freq, &
-                    vort850, rh250, rh500, rh700, rh850 )
+                    vort850, rh250, rh500, rh700, rh850, swfq)
                 call timing_off('FV_DIAG')     
 !-----------------------------------------------------------------------
    call mpp_clock_end(id_fv_diag)

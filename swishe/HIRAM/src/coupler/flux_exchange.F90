@@ -280,7 +280,7 @@ character(len=4), parameter :: mod_name = 'flux'
      id_rough_moist, id_rough_heat, id_rough_mom,    &
      id_land_mask,   id_ice_mask, id_sst,     &
      id_u_star, id_b_star, id_q_star, id_u_flux, id_v_flux,   &
-     id_t_surf, id_t_flux, id_r_flux, id_q_flux, id_slp,      &
+     id_t_surf, id_t_flux, id_r_flux, id_swfq, id_q_flux, id_slp,      &
      id_t_atm,  id_u_atm,  id_v_atm,  id_wind,                &
      id_t_ref,  id_rh_ref, id_u_ref,  id_v_ref, id_wind_ref,  &
      id_del_h,  id_del_m,  id_del_q,  id_rough_scale,         &
@@ -347,6 +347,7 @@ real, allocatable, dimension(:) :: &
 
      ex_flux_t,    &   ! sens heat flux
      ex_flux_lw,   &   ! longwave radiation flux
+     ex_swfq,   &   ! longwave radiation flux
 
      ex_dhdt_surf, &   ! d(sens.heat.flux)/d(T canopy)
      ex_dedt_surf, &   ! d(water.vap.flux)/d(T canopy)
@@ -1245,6 +1246,7 @@ subroutine sfc_boundary_layer ( dt, Time, Atm, Land, Ice, Land_Ice_Atmos_Boundar
        ex_drdt_surf(n_xgrid_sfc),  &
        ex_dhdt_atm (n_xgrid_sfc),  &
        ex_flux_t   (n_xgrid_sfc),  &
+       ex_swfq     (n_xgrid_sfc),  &
        ex_flux_lw  (n_xgrid_sfc),  &
        ex_drag_q   (n_xgrid_sfc),  &
        ex_avail    (n_xgrid_sfc),  &
@@ -1345,10 +1347,11 @@ subroutine sfc_boundary_layer ( dt, Time, Atm, Land, Ice, Land_Ice_Atmos_Boundar
   call data_override ('ATM', 'slp',    Atm%slp,    Time)
   call data_override ('ATM', 'gust',   Atm%gust,   Time)
   call data_override ('ATM', 'vort850',   Atm%vort850,   Time)
-  call data_override ('ATM', 'rh250',   Atm%rh250,   Time)
-  call data_override ('ATM', 'rh500',   Atm%rh500,   Time)
-  call data_override ('ATM', 'rh700',   Atm%rh700,   Time)
-  call data_override ('ATM', 'rh850',   Atm%rh850,   Time)
+  call data_override ('ATM', 'rh250',  Atm%rh250,   Time)
+  call data_override ('ATM', 'rh500',  Atm%rh500,   Time)
+  call data_override ('ATM', 'rh700',  Atm%rh700,   Time)
+  call data_override ('ATM', 'rh850',  Atm%rh850,   Time)
+  call data_override ('ATM', 'swfq',  Atm%swfq,   Time)
 !
 ! jgj: 2008/07/18 
 ! FV atm advects tracers in moist mass mixing ratio: kg co2 /(kg air + kg water)
@@ -1443,6 +1446,7 @@ subroutine sfc_boundary_layer ( dt, Time, Atm, Land, Ice, Land_Ice_Atmos_Boundar
   call put_to_xgrid (Atm%rh500,   'ATM', ex_rh500,   xmap_sfc, remap_method=remap_method)
   call put_to_xgrid (Atm%rh700,   'ATM', ex_rh700,   xmap_sfc, remap_method=remap_method)
   call put_to_xgrid (Atm%rh850,   'ATM', ex_rh850,   xmap_sfc, remap_method=remap_method)
+  call put_to_xgrid (Atm%swfq,   'ATM', ex_swfq,   xmap_sfc, remap_method=remap_method)
 
 ! put atmosphere bottom layer tracer data onto exchange grid
   do tr = 1,n_exch_tr
@@ -1557,7 +1561,7 @@ subroutine sfc_boundary_layer ( dt, Time, Atm, Land, Ice, Land_Ice_Atmos_Boundar
        ex_p_surf,ex_t_surf, ex_t_ca,  ex_tr_surf(:,isphum),                       &
        ex_u_surf, ex_v_surf,                                           &
        ex_rough_mom, ex_rough_heat, ex_rough_moist, ex_rough_scale,    &
-       ex_gust, ex_vort850, ex_rh250, ex_rh500, ex_rh700, ex_rh850,    &
+       ex_gust, ex_vort850, ex_rh250, ex_rh500, ex_rh700, ex_rh850, ex_swfq,   &
        ex_flux_t, ex_flux_tr(:,isphum), ex_flux_lw, ex_flux_u, ex_flux_v,         &
        ex_cd_m,   ex_cd_t, ex_cd_q,                                    &
        ex_wind,   ex_u_star, ex_b_star, ex_q_star,                     &
@@ -2877,13 +2881,12 @@ subroutine flux_ice_to_ocean ( Time, Ice, Ocean, Ice_Ocean_Boundary )
 
   if(ASSOCIATED(Ice_Ocean_Boundary%q_flux) ) call flux_ice_to_ocean_redistribute( Ice, Ocean, &
       Ice%flux_q, Ice_Ocean_Boundary%q_flux, Ice_Ocean_Boundary%xtype, do_area_weighted_flux )
-
+  
 !Balaji: moved data_override calls here from coupler_main
   if( ocn_pe )then
       call mpp_set_current_pelist(ocn_pelist)
       call data_override('OCN', 'u_flux',    Ice_Ocean_Boundary%u_flux   , Time )
       call data_override('OCN', 'v_flux',    Ice_Ocean_Boundary%v_flux   , Time )
-      call data_override('OCN', 't_flux',    Ice_Ocean_Boundary%t_flux   , Time )
       call data_override('OCN', 'q_flux',    Ice_Ocean_Boundary%q_flux   , Time )
       call data_override('OCN', 'salt_flux', Ice_Ocean_Boundary%salt_flux, Time )
       call data_override('OCN', 'lw_flux',   Ice_Ocean_Boundary%lw_flux  , Time )
@@ -3498,6 +3501,12 @@ subroutine flux_up_to_atmos ( Time, Land, Ice, Land_Ice_Atmos_Boundary, Land_bou
      call get_from_xgrid (diag_atm, 'ATM', ex_flux_t, xmap_sfc)
      used = send_data ( id_t_flux, diag_atm, Time )
   endif
+  
+  !------- SWISHE filter frequency -----------
+  if ( id_swfq > 0 ) then
+     call get_from_xgrid (diag_atm, 'ATM', ex_swfq, xmap_sfc)
+     used = send_data ( id_swfq, diag_atm, Time )
+  endif
 
   !------- net longwave flux -----------
   if ( id_r_flux > 0 ) then
@@ -3598,7 +3607,8 @@ subroutine flux_up_to_atmos ( Time, Land, Ice, Land_Ice_Atmos_Boundary, Land_bou
        ex_avail    ,  &
        ex_f_t_delt_n, &
        ex_tr_surf  ,  &
-       
+       ex_swfq, &
+
   ex_dfdtr_surf  , &
        ex_dfdtr_atm   , &
        ex_flux_tr     , &
@@ -3983,6 +3993,9 @@ subroutine diag_field_init ( Time, atmos_axes, land_axes )
   id_r_flux     = &
        register_diag_field ( mod_name, 'lwflx',      atmos_axes, Time, &
        'net (down-up) longwave flux',   'w/m2'    )
+
+  id_swfq = register_diag_field (mod_name, 'swfq', atmos_axes, Time, &
+                         'SWISHE filtering frequency', '')
 
   id_t_atm      = &
        register_diag_field ( mod_name, 't_atm',      atmos_axes, Time, &

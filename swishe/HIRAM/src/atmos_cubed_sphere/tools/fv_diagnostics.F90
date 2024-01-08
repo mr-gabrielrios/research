@@ -48,6 +48,7 @@ module fv_diagnostics_mod
 ! Selected p-level fields from 3D variables:
  integer :: id_vort850, id_w850,  &
             id_w200, id_s200, id_sl12, id_sl13
+ integer :: id_swfq ! GR (2024-01-05): initialize SWISHE filtering frequency field
  integer :: id_h200, id_t200, id_q200, id_omg200, id_rh200, id_u200, id_v200, &
             id_h50, id_t50, id_q50, id_rh50, id_u50, id_v50
  integer :: id_h100, id_h250, id_h300, id_h500, id_h700, id_h850
@@ -491,7 +492,7 @@ contains
 !------------------------------------------
        id_pmaskv2 = register_diag_field(TRIM(field), 'pmaskv2', axes(1:2), Time,&
             & 'masking pressure at lowest level', 'mb', missing_value=missing_value)
-                                     
+                                    
 !-------------------
 ! Hurricane scales:
 !-------------------
@@ -576,6 +577,14 @@ contains
 !            'Total water vapor', 'kg/m**2', missing_value=missing_value )
        id_tq = register_diag_field ( trim(field), 'tq', axes(1:2), Time,        &
             'Total water path', 'kg/m**2', missing_value=missing_value )
+
+!-------------------------------------------------------
+! GR (2024-01-07) Generate SWISHE filter frequency grid
+!-------------------------------------------------------
+
+       ! id_swfq = register_diag_field (trim(field), 'swfq', axes(1:2), Time, &
+       !                       'SWISHE filtering frequency', '', missing_value=missing_value )
+       id_swfq = 1
 
 !--------------------------
 ! 850-mb vorticity
@@ -1791,7 +1800,7 @@ contains
 
 
  subroutine fv_diag_gr(Atm, zvir, Time, print_freq, &
-                       vort850, rh250, rh500, rh700, rh850)
+                       vort850, rh250, rh500, rh700, rh850, swfq)
 
     type(fv_atmos_type), intent(inout) :: Atm(:)
     type(time_type),     intent(in) :: Time
@@ -1799,6 +1808,8 @@ contains
     integer,             intent(in):: print_freq
     real,                intent(inout):: vort850(:, :)
     real,                intent(inout):: rh250(:, :), rh500(:, :), rh700(:, :), rh850(:, :)
+    ! GR (2023-01-05): SWISHE filtering frequency grid
+    real,             intent(inout) :: swfq(:, :)
 
     integer :: isc, iec, jsc, jec, n, ntileMe
     integer :: isd, ied, jsd, jed, npz, itrac
@@ -2099,6 +2110,7 @@ contains
            call interpolate_vertical(isc, iec, jsc, jec, npz, 850.e2, &
                                      Atm(n)%peln, wk(isc:iec, jsc:jec, :), a2)
            rh850 = a2
+           swfq = merge(1.0, 0.0, (rh850 .ge. 100.0)) ! GR (2023-01-05): set SWISHE filter frequency grid to 0
            
            
            if (id_rh50>0) then
