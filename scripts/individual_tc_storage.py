@@ -4,7 +4,7 @@ import cftime, datetime, time
 # Numerical analysis packages
 import numpy as np, random, scipy
 # Local utility packages
-import dill, multiprocessing, os, pickle
+import dill, multiprocessing, os, pickle, utilities
 # Data structure packages
 import pandas as pd, xarray as xr
 # Visualization tools
@@ -50,10 +50,7 @@ def tc_storage(model, experiment, year_range, storm_type, random_num=None, bench
         lap = time.time()
     
     # Define output type based on storage conventions
-    if model == 'HIRAM' and min(year_range) >= 157:
-        output_type = 'atmos_8xdaily'
-    else:
-        output_type = 'atmos_4xdaily'
+    output_type = 'atmos_4xdaily'
     
     # Retrieve model data over specified year range. 
     # This is here so that both TC-specific and associated global model data can be analyzed together.
@@ -283,7 +280,7 @@ def retrieve_tracked_TCs(dirname, storm_type, year_range, basins=None):
         storm = storm.rename(columns={'lon': 'center_lon', 'lat': 'center_lat', 'flag': 'core_temp', 'slp': 'min_slp'}).reset_index(drop=True)
         # Append to the list for future concatenation
         storms[storm_id] = storm
-        
+    
     # Concatenate DataFrames
     data = pd.concat(storms.values())   
     
@@ -529,7 +526,6 @@ def vertical_profile_selection(storms, model, experiment, output_type='atmos_dai
 
     # Determine output frequency
     output_daily = True if output_type == 'atmos_daily' else False
-    print(output_type, output_daily)
     # Initialize container dictionary
     container = {}
 
@@ -647,48 +643,20 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
                     storage_dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs'
                     # Define filename using max wind and min SLP for future binning
                     max_wind, min_slp = storm_track_output[storm_id]['max_wind'].max(), storm_track_output[storm_id]['min_slp'].min()
-                    print(max_wind, min_slp)
                     storage_filename = 'TC-{0}-{1}-{2}-{3}-max_wind-{4:0.0f}-min_slp-{5:0.0f}.pkl'.format(model, experiment, storm_type, storm_id, max_wind, min_slp)
-                    print(storage_filename)
                     storage_path = os.path.join(storage_dirname, storage_filename)
                     # If file doesn't exist, save
                     if not os.path.isfile(os.path.join(storage_dirname, storage_filename)) and override:
                         with open(os.path.join(storage_dirname, storage_filename), 'wb') as f:
-                            print(os.path.join(storage_dirname, storage_filename))
+                            print('Saving to: ', os.path.join(storage_dirname, storage_filename))
                             pickle.dump(data[model][experiment][storm_id], f)
 
     return data
 
 if __name__ == '__main__':
     start = time.time()
-    data = main('HIRAM', experiments=['control'], storm_type='C15w', year_range=range(102, 149), 
+    # Use range(start, stop) for a range of years between 'start' and 'stop', and a list [start, stop] for specific years.
+    year_range = range(152, 156)
+    data = main('HIRAM', experiments=['control', 'swishe'], storm_type='C15w', year_range=year_range, 
                 num_storms=10, storage=True, override=True)
     print('Elapsed total runtime: {0:.3f}s'.format(time.time() - start))
-
-# Note to self
-### Serial test run: 1 proc, 10 years, 5 storms --> 307 s
-### Serial test run: 4 proc, 10 years, 5 storms --> 117 s
-### Serial test run: 8 proc, 10 years, 5 storms --> 140 s
-
-# fig, axes = plt.subplots(ncols=2, figsize=(9, 3.5))
-
-# model_name = 'AM2.5C360'
-# experiment = 'control'
-# vertical_param = 'omega'
-
-# index = 0
-# data[model_name][experiment]['tc_model_output'].isel(time=index).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')['U'].plot(ax=axes[0])
-# vertical_temp = data[model_name][experiment]['tc_vertical_output'].sel(time=data[model_name][experiment]['tc_model_output'].isel(time=index).time.values).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
-# center_x, center_y = len(vertical_temp.grid_xt)//2, len(vertical_temp.grid_yt)//2
-# vertical_temp.isel(grid_yt=slice(center_y - 2, center_y + 2))[vertical_param].mean(dim='grid_yt').plot(ax=axes[1])
-
-# storm_id = data[model_name][experiment]['tc_model_output'].isel(time=index)['storm_id']
-
-# # Check to see center alignment
-# x, y = [data[model_name][experiment]['tc_model_output'].isel(time=index).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all').grid_xt.values,
-#         data[model_name][experiment]['tc_model_output'].isel(time=index).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all').grid_yt.values]
-
-# axes[0].scatter(x[len(x)//2], y[len(y)//2], c='r', s=100)
-
-# fig.suptitle(data[model_name][experiment]['tc_model_output'].isel(time=index)['storm_id'].values)
-# fig.tight_layout()
