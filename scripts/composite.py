@@ -15,9 +15,10 @@ def planar_compositor(model, datasets, intensity_bin, field, pressure_level=None
         datasets (list): list of data dictionaries (.pkl file)
         intensity_bin (str): string
         field (str): field to be evaluated
-        pressure_level: ()
+        pressure_level (numeric): pressure level at which to evaluate the data, if applicable. Default is None.
     Returns:
-        _type_: _description_
+        data: dictionary with processed data. Dictionary is 2-tiered: (1) storm ID --> (2) field
+        composite_mean: nu
     """
     
     # Define key with format {FIELD}{HEIGHT} to match GFDL diagnostics names.
@@ -31,6 +32,7 @@ def planar_compositor(model, datasets, intensity_bin, field, pressure_level=None
     for ds in datasets:
         # Get storm ID
         storm_id = ds['track_output']['storm_id'].unique().item()
+        print('\t Processing {0}...'.format(storm_id))
         # Get timestamps relevant to the intensity bin at hand
         times = ds['track_output']['time'].loc[ds['track_output']['intensity_bin'] == intensity_bin]
         # Change from Pandas to cftime formats
@@ -38,20 +40,25 @@ def planar_compositor(model, datasets, intensity_bin, field, pressure_level=None
         # Determine which dictionary the field data is in
         subdict = None
         for sd in ['tc_model_output', 'tc_vertical_output']:
-            subdict = sd if field in ds[sd].data_vars else None
+            if field in ds[sd].data_vars:
+                subdict = sd
+        # Print error message
+        if subdict is None:
+            print('Field not found in the data, please try again...')
+            return None, None
         # Get the matching timestamps between the track output and the corresponding dictionary with field data
         index_timestamps = [t for t in times if t in ds[subdict][field].time.values]
         # and field + vertical level from the vertical data
-        ds = ds[subdict][field].sel(time=index_timestamps).sel(pfull=pressure_level, method='nearest') if pressure_level else ds[field].sel(time=times)
+        ds = ds[subdict][field].sel(time=index_timestamps).sel(pfull=pressure_level, method='nearest') if pressure_level else ds[subdict][field].sel(time=index_timestamps)
         # If timestamps match, proceed. Else, continue.
         if len(ds.time.values) > 0:
             # Populate dictionary with data. Limit to one entry per storm by choosing the first timestamp.
             data[storm_id] = {key: ds.isel(time=0).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')}
             # Check to see if the extents are less than the minima. If so, make the new minima
-            if (min_x == None) or (len(data[storm_id][key].grid_xt.values) < min_x):
-                min_x = len(data[storm_id][key].grid_xt.values)
-            if (min_y == None) or (len(data[storm_id][key].grid_yt.values) < min_y):
-                min_y = len(data[storm_id][key].grid_yt.values)
+            if (min_x == None) or (len(data[storm_id][key].grid_xt) < min_x):
+                min_x = len(data[storm_id][key].grid_xt)
+            if (min_y == None) or (len(data[storm_id][key].grid_yt) < min_y):
+                min_y = len(data[storm_id][key].grid_yt)
         else:
             continue
     
@@ -60,18 +67,34 @@ def planar_compositor(model, datasets, intensity_bin, field, pressure_level=None
     buffer = 1
     
     for storm_id in data.keys():
-        domain_x, domain_y = len(data[storm_id][key].grid_xt.values), len(data[storm_id][key].grid_yt.values)
-        center_x, center_y = domain_x // 2, domain_y // 2
-        data[storm_id][key] = data[storm_id][key].iloc(grid_xt=)
-        
-    return data
+        # Make minimum domain lengths even by reducing frame size, if not even
+        min_x = min_x - 1 if min_x % 2 == 1 else min_x
+        min_y = min_y - 1 if min_y % 2 == 1 else min_y
+        # Get midpoints
+        center_x, center_y = len(data[storm_id][key].grid_xt) // 2, len(data[storm_id][key].grid_yt) // 2
+        # Define slices
+        slice_x = slice(center_x - min_x//2 + buffer, center_x + min_x//2 - buffer)
+        slice_y = slice(center_y - min_y//2 + buffer, center_y + min_y//2 - buffer)
+        # Slice the domain
+        data[storm_id][key] = data[storm_id][key].isel(grid_xt=slice_x, grid_yt=slice_y)
+        # Flip the data about the x-axis if the center latitude is < 0 (for Southern Hemisphere storms).
+        if data[storm_id][key].isel(grid_yt=center_y)['grid_yt'] < 0:
+            data[storm_id][key] = np.flip(data[storm_id][key], axis=0)
+    
+    # Get composite mean over all storms by averaging along the 0th axis (storm ID axis)
+    composite_mean = np.nanmean(np.stack([v[key] for v in data.values()]), axis=0)
+    
+    return data, composite_mean
 
 # if __name__ == '__main__':
 #     dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs/processed'
 #     model, experiment = 'HIRAM', 'control'
+    
+#     num_storms = 5 # enter -1 to get all
 #     storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] 
 #                  for f in os.listdir(dirname)
-#                  if (model in f) and (experiment in f)]
+#                  if (model in f) and (experiment in f)][:num_storms]
+#     print('Storms to be processed: {0}'.format(storm_ids))
 #     datasets = []
 #     for storm_id in storm_ids:
 #         _, dataset = utilities.access(model, experiment, storm_type='C15w', storm_id=storm_id, processed=True)
