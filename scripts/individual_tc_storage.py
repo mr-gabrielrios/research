@@ -14,7 +14,7 @@ import cartopy.crs as ccrs, matplotlib, matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings("ignore")
 
-def tc_storage(model, experiment, year_range, storm_type, random_num=None, benchmarking=True, reference_time='lmi', offset=0):
+def tc_storage(model, experiment, year_range, storm_type, random_num=None, benchmarking=True, reference_time=None, offset=0):
     
     ''' 
     Function to build unified xArray Dataset to hold model and track data for tracked TCs in a given model and experiment.
@@ -319,7 +319,7 @@ def retrieve_model_data(model, dirname, year_range, output_type='atmos_month', b
 def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_type='atmos_daily', extent=15, num_storms=None, reference_time=None):
 
     # This boolean controls what frequency data is pulled at. Default to daily to allow for azimuthal compositing of vertical fields.
-    timestamp_daily_freq = False if output_type == 'atmos_8xdaily' else True
+    timestamp_daily_freq = False if min(year_range) >= 157 else True
     
     # Check to see if model_output (previously-access model data) is the same output type as desired for TCs. If so, pull from that Dataset.
     if model_output and output_type == model_output.attrs['filename'].split('.')[0]:
@@ -347,10 +347,6 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
     storm_counter = 0
     # Access model data that are specific to each tracked TC.
     for storm_index, storm_id in enumerate(storm_ids):
-        print('\t \t', storm_index, storm_id, storm_counter, num_storms)
-        # Limit number of storms read if a limit is given
-        if num_storms and (storm_counter > num_storms):
-            break
         # Pull tracked TC data relative to storm
         storm = storms.loc[storms['storm_id'] == storm_id]
         # Find timestamp corresponding to storm LMI. LMI is defined as timestamp with maximum wind.
@@ -459,7 +455,7 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
             except:
                 print('Unable to process, part 1c:', storm_id)
                 pass
-        elif output_type == 'atmos_8xdaily':
+        else:
             print('\t Using the new method!')
             # Initialize container list of storm snapshots
             snapshots = []
@@ -468,14 +464,13 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
                 snapshot = storm_xr.sel(time=pull_timestamp, method='nearest')
                 snapshots.append(snapshot)
             snapshot = xr.concat(snapshots, dim='time').drop_duplicates('time')
-        else:
-            snapshot = storm_xr.where(storm_xr['max_wind'] == storm_xr['max_wind'].max(), drop=True)
 
         # Part 2: clip model data for each storm timestamp
         # Identify center as location of maximum absolute value of vorticity or minimum pressure
         center_param = 'slp'
         # try:
         clip_container = []
+        print('Snapshot timestamps: {0}'.format(snapshot.time.values))
         # Iterate over each timestep
         for index, timestamp in enumerate(storm_xr.time.values):
             # Create year-adjusted timestamp
@@ -502,28 +497,32 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
             print('\t Storm ID: {0}, coordinates: {1}, {2}'.format(storm_id, center_lat, center_lon))
             # Get snapshot
             temp_snapshot = snapshot.sel(time=timestamp, 
-                                            grid_xt=np.arange(center_lon-extent, center_lon+extent), 
-                                            grid_yt=np.arange(center_lat-extent, center_lat+extent), 
-                                            method='nearest').drop_duplicates(['grid_xt'])
+                                         grid_xt=np.arange(center_lon-extent, center_lon+extent), 
+                                         grid_yt=np.arange(center_lat-extent, center_lat+extent), 
+                                         method='nearest').drop_duplicates(['grid_xt'])
             temp_snapshot['center_lon'], temp_snapshot['center_lat'] = center_lon, center_lat
             clip_container.append(temp_snapshot)
-            print(temp_snapshot.time.values)
+            print('\t ', temp_snapshot.time.values)
         clip_container = xr.concat(clip_container, dim='time').drop_duplicates(dim='time')
         storms_xr[storm_id] = clip_container
         output_ids.append(storm_id)
-        print('\t Append success for ', storm_id, clip_container.time.values)
+        print('\t Append success for ', storm_id, clip_container.time.values, '\n')
         storm_counter += 1
-    
-    return storms_xr, output_ids
+        
+        # Limit number of storms read if a limit is given
+        if num_storms and (storm_counter >= num_storms):
+            return storms_xr, output_ids
 
-def vertical_profile_selection(storms, model, experiment, output_type='atmos_daily'):
+def vertical_profile_selection(storms, model, experiment):
 
     '''
     Arguments:
     - storms (list)
     '''
     start = time.time()
-
+    
+    # Vertical data before year 157 of HIRAM runs is output daily, 8xdaily after
+    output_type = 'atmos_8xdaily' if min(year_range) >= 157 else 'atmos_daily'
     # Determine output frequency
     output_daily = True if output_type == 'atmos_daily' else False
     # Initialize container dictionary
@@ -543,8 +542,9 @@ def vertical_profile_selection(storms, model, experiment, output_type='atmos_dai
         output = []
         # Get timestamp
         timestamps = storm.time.values
+        # Iterate over timestamps
         for timestamp in timestamps:
-            print('\t Processing timestamp: {0}'.format(timestamp))
+            print('\t Processing timestamp: {0} at {1} frequency'.format(timestamp, output_type))
             snapshot = storm.sel(time=timestamp)
             # Drop null values
             snapshot = snapshot.dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
@@ -578,6 +578,7 @@ def vertical_profile_selection(storms, model, experiment, output_type='atmos_dai
                 vertical_profile[storm_param] = snapshot[storm_param]
 
             output.append(vertical_profile)
+            print('\t Successful processing of vertical timestamp.')
         # Concatenate all timestamps
         container[storm_id] = xr.concat(output, dim='time')
 
@@ -620,7 +621,12 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
             print('\n-----------------------------------------------------------------------')
             print('Processing year: {0}'.format(year))
             # Get model data for future use in TC processing
-            output_type = 'atmos_8xdaily' if model == 'HIRAM' and year >= 157 else 'atmos_4xdaily'
+            if model == 'HIRAM' and year >= 157:
+                output_type = 'atmos_8xdaily'
+            elif model == 'HIRAM' and year >= 152 and year < 157:
+                output_type = 'atmos_4xdaily'
+            else:
+                output_type = 'atmos_daily'
             model_output = retrieve_model_data(model, model_dir, year_range=years, output_type=output_type)
             # Get tracked TCs from Lucas Harris' TC tracker
             track_output, storm_track_output  = retrieve_tracked_TCs(track_dir, storm_type, year_range=years, basins=None)
@@ -628,7 +634,7 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
             storm_model_output, storm_ids = retrieve_model_TCs(model_dir, (min(year_range), max(year_range)), 
                                                        track_output, model_output, output_type=output_type, num_storms=num_storms)
             # Pair vertical model data to tracked TC for entire storm lifetime
-            vertical_storm_output = vertical_profile_selection(storm_model_output, model, experiment, output_type=output_type)
+            vertical_storm_output = vertical_profile_selection(storm_model_output, model, experiment)
             
             for storm_id in storm_ids:
                 data[model][experiment][storm_id] = {}
@@ -656,7 +662,7 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
 if __name__ == '__main__':
     start = time.time()
     # Use range(start, stop) for a range of years between 'start' and 'stop', and a list [start, stop] for specific years.
-    year_range = range(152, 156)
+    year_range = range(152, 157)
     data = main('HIRAM', experiments=['control', 'swishe'], storm_type='C15w', year_range=year_range, 
                 num_storms=10, storage=True, override=True)
     print('Elapsed total runtime: {0:.3f}s'.format(time.time() - start))
