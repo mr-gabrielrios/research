@@ -83,19 +83,28 @@ def planar_compositor(model, datasets, intensity_bin, field, pressure_level=None
     
     # Get composite mean over all storms by averaging along the 0th axis (storm ID axis)
     composite_mean = np.nanmean(np.stack([v[key] for v in data.values()]), axis=0)
+    # Get degree spacing for the data. Assumes all spacings are equal for each dimension
+    dx, dy = [[entry[key] for entry in data.values()][0].grid_xt.diff(dim='grid_xt').values[0],
+              [entry[key] for entry in data.values()][0].grid_yt.diff(dim='grid_yt').values[0]]
+    # Define dictionary to hold distance data (x and y) from composite_mean shape
+    # The domains are define as +/- 1/2 the width (centered on 0), stepping by 1 and scaling by dx and dy
+    composite_mean_x = dx*np.arange(-composite_mean.shape[1]//2, composite_mean.shape[1]//2, 1)
+    composite_mean_y = dy*np.arange(-composite_mean.shape[0]//2, composite_mean.shape[0]//2, 1)
+    # Populate with the dimensional data
+    composite_mean = {'grid_xt': composite_mean_x, 'grid_yt': composite_mean_y, 'data': composite_mean}    
     
     return data, composite_mean
 
-# if __name__ == '__main__':
-#     dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs/processed'
-#     model, experiment = 'HIRAM', 'control'
+if __name__ == '__main__':
+    dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs/processed'
+    model, experiment = 'HIRAM', 'swishe'
     
-#     num_storms = 5 # enter -1 to get all
-#     storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] 
-#                  for f in os.listdir(dirname)
-#                  if (model in f) and (experiment in f)][:num_storms]
-#     print('Storms to be processed: {0}'.format(storm_ids))
-#     datasets = []
-#     for storm_id in storm_ids:
-#         _, dataset = utilities.access(model, experiment, storm_type='C15w', storm_id=storm_id, processed=True)
-#         datasets.append(dataset)
+    num_storms = -1 # enter -1 to get all
+    storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] 
+                 for f in os.listdir(dirname)
+                 if (model in f) and (experiment in f)][:num_storms]
+    print('Storms to be processed: {0}'.format(storm_ids))
+    datasets = []
+    for storm_id in storm_ids:
+        _, dataset = utilities.access(model, experiment, storm_type='C15w', storm_id=storm_id, processed=True)
+        datasets.append(dataset)
