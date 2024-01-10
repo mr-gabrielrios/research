@@ -14,187 +14,6 @@ import cartopy.crs as ccrs, matplotlib, matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings("ignore")
 
-def tc_storage(model, experiment, year_range, storm_type, random_num=None, benchmarking=True, reference_time=None, offset=0):
-    
-    ''' 
-    Function to build unified xArray Dataset to hold model and track data for tracked TCs in a given model and experiment.
-    
-    Input(s):
-    - model (str):                name of model to access (typically "AM2.5" or "HIRAM")
-    - experiment (str):           name of experiment to access (typically "control", "ktc", "plus2K", etc.)
-    - year_range (tuple of ints): 2-element tuple with a start and end year
-    - storm_type (str):           type of storm to evaluate from TC tracks data ("TS" for all storms or "C15w" for hurricanes)
-    - benchmarking (bool):        boolean to enable time benchmarking
-    - reference_time (str):       time at which to get data 
-    - offset (int):               number of 6-hour periods by which to offset time selection (for examples, 2 = 12 hours ahead)
-    Output(s):
-    - dirs (tuple):               2-element tuple with pathnames for the model- and experiment-specific GCM and track directories.
-    '''
-    
-    if benchmarking:
-        start = time.time()
-    
-    # Define paths to model- and experiment-specific data.
-    model_dir, track_dir = dirnames(model, experiment)
-    
-    if benchmarking:
-        print('Directory access time: {0:.3f} s'.format(time.time() - start))
-        lap = time.time()
-    
-    # Retrieve tracked TCs over the specified year range. Note: year_range re-specified to ensure increasing order in tuple.
-    storm_track_output = retrieve_tracked_TCs(track_dir, storm_type, year_range=(min(year_range), max(year_range)),
-                                              basins=None)
-    
-    if benchmarking:
-        print('Track access time: {0:.3f} s'.format(time.time() - lap))
-        lap = time.time()
-    
-    # Define output type based on storage conventions
-    output_type = 'atmos_4xdaily'
-    
-    # Retrieve model data over specified year range. 
-    # This is here so that both TC-specific and associated global model data can be analyzed together.
-    model_output = retrieve_model_data(model, model_dir, year_range=(min(year_range), max(year_range)), output_type=output_type, benchmarking=benchmarking)
-    
-    if benchmarking:
-        print('Model output access time: {0:.3f} s'.format(time.time() - lap))
-        lap = time.time()
-    
-    # Retrieve model data specified to tracked TCs.
-    # Note: default model output type is 'atmos_4xdaily'. If 'output_type' matches 'model_output', then access pre-loaded data from 'model_output'.
-    storm_model_output, storm_ids = retrieve_model_TCs(model_dir, (min(year_range), max(year_range)), storm_track_output, 
-                                                       model_output, output_type=output_type, random_num=random_num)
-    
-    if benchmarking:
-        print('TC accessing output access time: {0:.3f} s'.format(time.time() - lap))
-        lap = time.time()
-    
-    # Get radius for each storm to use for future normalization
-    storm_model_output = add_radius(storm_model_output, benchmarking=benchmarking)
-    
-    if benchmarking:
-        print('Radius derivation access time: {0:.3f} s'.format(time.time() - lap))
-        lap = time.time()
-
-    # Get full vertical data for the corresponding storm dates and locations
-    vertical_storm_output = vertical_profile_selection(storm_model_output, model, experiment)
-    
-    if benchmarking:
-        print('Vertical profile/daily data access time: {0:.3f} s'.format(time.time() - lap))
-        lap = time.time()
-    
-    if benchmarking:
-        print('Total runtime: {0:.3f} s'.format(time.time() - start))
-    
-    return storm_track_output, storm_model_output, vertical_storm_output
-
-def dirnames(model, experiment):
-
-    ''' 
-    Function to store pathnames for selected models and experiments. 
-    
-    Input(s):
-    - model (str):  name of model to access (typically "AM2.5" or "HIRAM").
-    Output(s):
-    - dirs (tuple): 2-element tuple with pathnames for the model- and experiment-specific GCM and track directories.
-    '''
-    # Model directories 
-    model_dirs = {'AM2.5': {'control': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_tigercpu_intelmpi_18_540PE/POSTP',
-                            'swishe': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/POSTP'},
-                  'AM2.5C360': {'control': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5C360/work/CTL1990s_tigercpu_intelmpi_18_1080PE/POSTP',
-                            'swishe': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5C360/work/CTL1990s_swishe_tigercpu_intelmpi_18_1080PE/POSTP'},
-                  'FLOR': {'control': '/tiger/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_v201905_tigercpu_intelmpi_18_576PE/POSTP',
-                            'swishe': '/tiger/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_v201905_swishe_tigercpu_intelmpi_18_576PE/POSTP'},
-                  'HIRAM': {'control': '/tiger/scratch/gpfs/GEOCLIM/gr7610/HIRAM/work/CTL1990s_tigercpu_intelmpi_18_540PE/POSTP',
-                            'swishe': '/tiger/scratch/gpfs/GEOCLIM/gr7610/HIRAM/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/POSTP'}}
-    # Track directories
-    track_dirs = {'AM2.5': {'control': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
-                            'swishe': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k'},
-                  'AM2.5C360': {'control': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5C360/work/CTL1990s_tigercpu_intelmpi_18_1080PE/analysis_lmh/cyclones_gav_ro110_330k',
-                            'swishe': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5C360/work/CTL1990s_swishe_tigercpu_intelmpi_18_1080PE/analysis_lmh/cyclones_gav_ro110_330k'},
-                  'FLOR': {'control': '/tiger/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_v201905_tigercpu_intelmpi_18_576PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
-                            'swishe': '/tiger/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_v201905_swishe_tigercpu_intelmpi_18_576PE/analysis_lmh/cyclones_gav_ro110_1C_330k'},
-                  'HIRAM': {'control': '/tiger/scratch/gpfs/GEOCLIM/gr7610/HIRAM/work/CTL1990s_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
-                            'swishe': '/tiger/scratch/gpfs/GEOCLIM/gr7610/HIRAM/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k'}}
-        
-    dirs = (model_dirs[model][experiment], track_dirs[model][experiment])
-    
-    return dirs
-
-def lmh_parser(path):
-    
-    ''' 
-    This method parses through text files from Lucas Harris' run outputs (held in directories titled 'analysis_lmh') 
-    and produces an output DataFrame. 
-    
-    Input(s):
-    - path (str):            path containing raw tracker data from Lucas Harris' runs.
-    Output(s):
-    - df (Pandas DataFrame): Pandas DataFrame containing tracked TC data
-    '''
-    
-    # Create file object instance
-    fobj = open(path, 'r').readlines()
-    # Initialize dictionary to hold data
-    data = {'storm_num': {}}
-    # Initialize storm counter
-    count = 1
-    # Iterate through text file
-    for line in fobj:
-        # Extract information from the line
-        content = line.strip()
-        # Creates new storm-specific dict in the parent dict. The '+++' demarcates a new storm.
-        if '+++' in line:
-            storm_num = '{0:04d}'.format(count)
-            data['storm_num'][storm_num] = {'storm_id': [], 'time': [], 'lon': [], 'lat': [], 'slp': [], 'max_wind': [], 'flag': []}
-            count += 1
-        # Populates the storm-specific dict
-        else:
-            storm_num = '{0:04d}'.format(count-1) 
-            tc_info = [x for x in content.split(' ') if x]
-            year = tc_info[0][0:4] # get 4-digit year
-            data['storm_num'][storm_num]['storm_id'].append('{0}-{1:04d}'.format(year, count-1))
-            data['storm_num'][storm_num]['time'].append(tc_info[0])
-            data['storm_num'][storm_num]['lon'].append(tc_info[1])
-            data['storm_num'][storm_num]['lat'].append(tc_info[2])
-            data['storm_num'][storm_num]['slp'].append(tc_info[3])
-            data['storm_num'][storm_num]['max_wind'].append(tc_info[4])
-            data['storm_num'][storm_num]['flag'].append(tc_info[5])
-    
-    try:
-        # Converts the dictionary into a DataFrame
-        df = pd.concat({k: pd.DataFrame(v).T for k, v in data.items()}, axis=1)['storm_num']
-        df = df.explode(df.columns.to_list()).reset_index().rename(columns={'index': 'storm_num'})
-        # Re-cast column data types
-        df = df.astype({'lon': 'float', 'lat': 'float', 'slp': 'float', 'max_wind': 'float', 'flag': 'float'})
-    except:
-        df = pd.DataFrame(columns=['storm_id', 'time', 'lon', 'lat', 'slp', 'max_wind', 'flag'])
-    
-    ''' DataFrame refinement. '''
-    # Remove cold-core data points (flag == -1)
-    df = df.loc[df['flag'] != -1].reset_index(drop=True)
-    # Convert timestamps to datetime objects
-    df['time'] = pd.to_datetime(df['time'], format='%Y%m%d%H')
-    
-    return df
-
-def coords_to_dist(a, b):
-    ''' Convert coordinates to distance in meters. '''
-    
-    R = 6371e3
-    
-    lon_a, lat_a = np.array(a)*np.pi/180
-    lon_b, lat_b = np.array(b)*np.pi/180
-    
-    dlon, dlat = lon_b - lon_a, lat_b - lat_a
-    
-    a = np.sin(dlat/2)**2 + np.cos(lat_a)*np.cos(lat_b)*np.sin(dlon/2)**2    
-    c = 2*np.arctan2(np.sqrt(a), np.sqrt(1-a))
-    
-    distance = R*c
-    
-    return distance
-
 def retrieve_tracked_TCs(dirname, storm_type, year_range, basins=None):
 
     '''
@@ -227,7 +46,7 @@ def retrieve_tracked_TCs(dirname, storm_type, year_range, basins=None):
                   if min(year_range) + year_adjust <= pd.to_datetime(f.split('.')[-2].split('-')[0]).year < max(year_range) + year_adjust]
     
     # Concatenate all tracked TC data from the filename list
-    data = pd.concat([lmh_parser(os.path.join(dirname, fname)) for fname in fnames])
+    data = pd.concat([utilities.lmh_parser(os.path.join(dirname, fname)) for fname in fnames])
     
     ''' Derived track-based data algorithm. Storm-specific derived properties will be generated in here. '''
     
@@ -261,7 +80,7 @@ def retrieve_tracked_TCs(dirname, storm_type, year_range, basins=None):
             # Determine timedelta between points (i, i-1)
             dt = storm.iloc[i]['time'] - storm.iloc[i-1]['time']
             # Derive speed (distance / time in m s^-1)
-            speed = coords_to_dist((lon_b, lat_b), (lon_a, lat_a))/dt.seconds
+            speed = utilities.coords_to_dist((lon_b, lat_b), (lon_a, lat_a))/dt.seconds
             # Get changes in longtiude and latitude
             dlon, dlat = lon_b - lon_a, lat_b - lat_a
             # Derive direction relative to north (range of 0 to 360)
@@ -536,7 +355,7 @@ def vertical_profile_selection(storms, model, experiment):
     start = time.time()
     
     # Vertical data before year 157 of HIRAM runs is output daily, 8xdaily after
-    output_type = 'atmos_8xdaily' if min(year_range) >= 157 else 'atmos_daily'
+    output_type = 'atmos_8xdaily' if (min(year_range) >= 157) and (model == 'HIRAM') else 'atmos_daily'
     # Determine output frequency
     output_daily = True if output_type == 'atmos_daily' else False
     # Initialize container dictionary
@@ -574,7 +393,7 @@ def vertical_profile_selection(storms, model, experiment):
                     timestamp = cftime.datetime(timestamp.year, timestamp.month, timestamp.day, hour=0, calendar='noleap')
             print('\t ---> Vertical timestamp out: {0}'.format(timestamp))
             # Get path name corresponding to model and experiment
-            model_dir, _ = dirnames(model, experiment)
+            model_dir, _ = utilities.dirnames(model, experiment, data_type='model_output')
             # Pull full vertical output and select corresponding day
             vertical_profile = xr.open_dataset('{0}/{1:04d}0101.{2}.nc'.format(model_dir, timestamp.year, output_type))
             # Filter by time and spatial domain
@@ -626,7 +445,7 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
     for experiment_num, experiment in enumerate(experiments):
         # data[model][experiment] = {}
         # Define paths to model- and experiment-specific data.
-        model_dir, track_dir = dirnames(model, experiment)
+        model_dir, track_dir = utilities.dirnames(model, experiment, data_type='model_output'), utilities.dirnames(model, experiment, data_type='track_data')
     
         # For a given year:
         for year in year_range:
