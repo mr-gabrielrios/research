@@ -99,6 +99,20 @@ def planar_compositor(model, datasets, intensity_bin, field, pressure_level=None
 
 def azimuthal_compositor(model, datasets, intensity_bin, field):
     
+    """
+    Method to generate azimuthal composites for a list of given TCs for a field, 
+    pressure level (if not a surface or integrated quantity), and an intensity bin.
+
+    Args:
+        model (str): name of model
+        datasets (list): list of data dictionaries (.pkl file)
+        intensity_bin (str): string
+        field (str): field to be evaluated
+    Returns:
+        data (dictionary): dictionary with list of processed data. Dictionary is 2-tiered: (1) storm ID --> (2) field
+        composite_mean (xArray DataArray): composite mean in radial (and pressure, if applicable) coordinates 
+    """
+    
     # Define key with format {FIELD}{HEIGHT} to match GFDL diagnostics names.
     # For example, specific humidity at 700 hPa would be 'q700'.
     key = field
