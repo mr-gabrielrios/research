@@ -208,6 +208,7 @@ def azimuthal_compositor(model, datasets, intensity_bin, field):
                     temp = data[storm_id][key].isel(pfull=j).where((data[storm_id][key].isel(pfull=j)['radius'] >= inner_radius) & 
                                                                    (data[storm_id][key].isel(pfull=j)['radius'] < outer_radius)).values
                     # Filter out missing data and assign to the corresponding array location
+                    # print('{0:.2f} to {1:.2f}: {2}'.format(inner_radius, outer_radius, temp))
                     out[j, i] = np.nanmean(temp[~np.isnan(temp)])
             # Generate the output xArray DataArray
             data[storm_id][key] = xr.DataArray(data=out, dims=['pfull', 'radius'], 
@@ -250,7 +251,7 @@ def azimuthal_compositor(model, datasets, intensity_bin, field):
 
 if __name__ == '__main__':
     dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs/processed'
-    model, experiment = 'HIRAM', 'swishe'
+    model, experiment = 'HIRAM', 'control'
     num_storms = 5 # enter -1 to get all
     storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] 
                  for f in os.listdir(dirname)

@@ -232,6 +232,8 @@ def vertical_integral(data, field, bottom=950, top=100, benchmarking=False):
         data['tc_vertical_output'] = data['tc_vertical_output'].drop_dims(drop_dim) if drop_dim in data['tc_vertical_output'].dims else data['tc_vertical_output']
     # Initialize container list to be concatenated over time later
     container = []
+    # Try dropping duplicates
+    data['tc_vertical_output'] = data['tc_vertical_output'].drop_duplicates('time')
     # Iterate over each timestep
     for t, timestamp in enumerate(data['tc_model_output'].time.values):
         # Create shorthand name for vertical data
@@ -276,21 +278,42 @@ def vertical_integral(data, field, bottom=950, top=100, benchmarking=False):
     
     return data
     
-def radial_tangential_velocities(data, x, y, R): 
+def radial_tangential_velocities(data): 
     '''
     Calculate radial and tangential velocity components from zonal and meridional velocities.
     '''
-
-    u, v = data['ucomp'], data['vcomp']
-
-    if np.nanmin(data.grid_yt) < 0:
-        u, v = -u, -v
     
-    theta = np.arctan(v/u)
-    data['v_radial'] = (u*x + v*y)/R
-    data['v_tangential'] = (v*x - u*y)/R
-    
-    data['v_radial'].attrs = {'long_name': 'radial velocity', 'units': 'm s$^{-1}$'}
-    data['v_tangential'].attrs = {'v_tangential': 'tangential velocity', 'units': 'm s$^{-1}$'}
+    # Pull vertical data from the dictionary
+    dataset = data['tc_vertical_output']
+    # Initialize output list that will store all processed data timestamps
+    output = []
+    # Iterate through each timestep
+    for t, timestamp in enumerate(dataset.time.values):
+        # Pull data at the iterand timestamp
+        snapshot = dataset.sel(time=timestamp).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
+        # Get domain center to support the setup of a TC-centered domain for this snapshot
+        center_x, center_y = len(snapshot['grid_xt']) // 2, len(snapshot['grid_yt']) // 2
+        # Create coordinates for a TC-centric coordinate system (TC_xt, TC_yt)
+        snapshot = snapshot.assign_coords({'TC_xt': snapshot['grid_xt'] - snapshot['grid_xt'].isel(grid_xt=center_x),
+                                           'TC_yt': snapshot['grid_yt'] - snapshot['grid_yt'].isel(grid_yt=center_y)})
+        # Calculate radial distance in the TC-centric coordinate system from the domain center (center_x, center_y)
+        X, Y = np.meshgrid(snapshot['TC_xt'].values, snapshot['TC_yt'].values) # radius substep 1: create meshgrid
+        snapshot['radius'] = xr.DataArray(data=np.sqrt(X**2 + Y**2), dims=['grid_yt', 'grid_xt'])
+        # Calculate radial and tangential components
+        # Note: might need to convert TC_xt, TC_yt, and radius to absolute distances
+        snapshot['wind_radial'] = (snapshot['ucomp']*snapshot['TC_xt'] + snapshot['vcomp']*snapshot['TC_yt'])/snapshot['radius']
+        snapshot['wind_tangential'] = abs((snapshot['ucomp']*snapshot['TC_yt'] - snapshot['vcomp']*snapshot['TC_xt'])/snapshot['radius'])
+        # Replace any nans (typically at TC center where radius == 0) with 0
+        for field in ['wind_radial', 'wind_tangential']:
+            snapshot[field] = xr.where(snapshot[field].isnull(), 0, snapshot[field])
+        # Add attributes
+        snapshot['wind_radial'].attrs = {'long_name': 'radial velocity', 'units': 'm s$^{-1}$'}
+        snapshot['wind_tangential'].attrs = {'long_name': 'tangential velocity', 'units': 'm s$^{-1}$'}
+        # Add to output list
+        output.append(snapshot)
+    # Concatenate all snapshots and sort by time
+    output = xr.concat(output, dim='time').sortby('time')
+    # Pop the output data back into the input data dictionary
+    data['tc_vertical_output'] = output
     
     return data
