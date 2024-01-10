@@ -25,6 +25,8 @@ def derived_fields(model_name, data):
     data = derived.rh(data)
     # Add moist static energy
     data = derived.mse(data)
+    # Add radial and tangential velocity components
+    data = derived.radial_tangential_velocities(data)
     
     # If storm year is greater than or equal to 2052 for HIRAM runs, process all the fields
     if storm_year >= 2052 and model_name == 'HIRAM':
@@ -75,7 +77,7 @@ def main(model, experiment, storm_type, storm_id=None):
     print('Processing {0}'.format(storm_id))
     # Load data for a given storm
     filename, data = utilities.access(model, experiment, storm_type, storm_id)
-    print(data['tc_vertical_output'])
+    print(data['tc_vertical_output'].dims)
     # Assign intensity bins to each timestamp
     data = utilities.intensity_binning(data, intensity_metric='max_wind')
     # Process data and obtain derived fields
@@ -87,11 +89,11 @@ def main(model, experiment, storm_type, storm_id=None):
     
 if __name__ == '__main__':
     # Define loading parameters
-    model, experiment, storm_type = 'HIRAM', 'control', 'C15w'
+    model, experiment, storm_type = 'AM2.5', 'control', 'C15w'
     # Single storm load    
-    # storm_ids = ['2052-0034']
+    storm_ids = ['2052-0034']
     # Multi-storm load
-    num_storms = 2
+    num_storms = -1 # enter -1 to get all
     storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] 
                  for f in os.listdir('/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs')
                  if (model in f) and (experiment in f)][:num_storms]

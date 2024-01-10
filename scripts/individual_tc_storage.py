@@ -281,8 +281,11 @@ def retrieve_tracked_TCs(dirname, storm_type, year_range, basins=None):
         # Append to the list for future concatenation
         storms[storm_id] = storm
     
-    # Concatenate DataFrames
-    data = pd.concat(storms.values())   
+    # Concatenate DataFrames if storms are found. If not, return None.
+    if len(storms.values()) > 0:
+        data = pd.concat(storms.values())   
+    else:
+        data, storms = None, None
     
     return data, storms
 
@@ -343,6 +346,10 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
 
     print('\t ', storm_ids)
     print('\t Number of storms to be processed: {0}'.format(len(storm_ids)))
+    
+    # Truncate number of storms if less than requested are found
+    if len(storm_ids) < num_storms:
+        num_storms = len(storm_ids)
     
     storm_counter = 0
     # Access model data that are specific to each tracked TC.
@@ -485,6 +492,7 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
             temp_snapshot = snapshot.sel(time=timestamp, 
                                         grid_xt=np.arange(temp_center_lon-extent, temp_center_lon+extent),
                                         grid_yt=np.arange(temp_center_lat-extent, temp_center_lat+extent), method='nearest').drop_duplicates(['grid_xt'])
+            print(temp_snapshot)
             # Center-detection using chosen method (e.g., look for max(vort850), look for min(slp)
             if center_param == 'vort850':
                 center_detector = xr.where(abs(temp_snapshot[center_param]) == abs(temp_snapshot[center_param]).max().values, temp_snapshot[center_param], np.nan)
@@ -509,9 +517,15 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
         print('\t Append success for ', storm_id, clip_container.time.values, '\n')
         storm_counter += 1
         
+        print('Number of storms to process: {0}, currently on {1}'.format(num_storms, storm_counter))
+        
         # Limit number of storms read if a limit is given
         if num_storms and (storm_counter >= num_storms):
             return storms_xr, output_ids
+        else:
+            continue
+        
+    return storms_xr, output_ids
 
 def vertical_profile_selection(storms, model, experiment):
 
@@ -630,9 +644,12 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
             model_output = retrieve_model_data(model, model_dir, year_range=years, output_type=output_type)
             # Get tracked TCs from Lucas Harris' TC tracker
             track_output, storm_track_output  = retrieve_tracked_TCs(track_dir, storm_type, year_range=years, basins=None)
+            # Check if any storms are found - if not, go to next loop
+            if track_output is None or storm_track_output is None:
+                continue
             # Pair model data to tracked TC for entire storm lifetime
             storm_model_output, storm_ids = retrieve_model_TCs(model_dir, (min(year_range), max(year_range)), 
-                                                       track_output, model_output, output_type=output_type, num_storms=num_storms)
+                                                               track_output, model_output, output_type='atmos_4xdaily', num_storms=num_storms)
             # Pair vertical model data to tracked TC for entire storm lifetime
             vertical_storm_output = vertical_profile_selection(storm_model_output, model, experiment)
             
@@ -662,7 +679,7 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
 if __name__ == '__main__':
     start = time.time()
     # Use range(start, stop) for a range of years between 'start' and 'stop', and a list [start, stop] for specific years.
-    year_range = range(152, 154)
-    data = main('HIRAM', experiments=['swishe'], storm_type='C15w', year_range=year_range, 
+    year_range = range(2001, 2010)
+    data = main('FLOR', experiments=['control', 'swishe'], storm_type='C15w', year_range=year_range, 
                 num_storms=10, storage=True, override=True)
     print('Elapsed total runtime: {0:.3f}s'.format(time.time() - start))
