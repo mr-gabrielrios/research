@@ -2,6 +2,8 @@ import cartopy, cartopy.crs as ccrs
 import numpy as np, pandas as pd, scipy as sp
 import matplotlib, matplotlib.pyplot as plt
 
+import composite, utilities
+
 def cmap_white_adjust(cmap):
     ''' Adjust a given sequential monochromatic colormap to go from white to the monochrome. 
     
@@ -21,6 +23,97 @@ def cmap_white_adjust(cmap):
     
     return cm
 
+def planar_composite(data, intensity_bins, field, pressure_level, experiment_plot='control'):
+    """
+    Method to obtain planar composite for prescribed data for a given field.
+    Note: input must be in the form of a 3-tiered dictionary that is the output of tc_analyis.load().
+
+    Args:
+        data (dict): 3-tiered dictionary
+        intensity_bins (list of str): list of strs with intensity bin listings
+        field (str): name of field to evaluate
+        pressure_level (numeric): level at which to evaluate field
+        experiment_plot (str): experiment to plot (typically control, swishe, or swishe-control)
+    """
+    
+    ''' Generate composites. '''
+    # Iterate over the models provided in the dictionary
+    for model in data.keys():
+        # Iterate over the experiments provided in the dictionary
+        for experiment in data[model].keys():
+            # Create subdictionaries for prescribed intensity bins
+            data[model][experiment]['composite'] = {intensity_bin: None for intensity_bin in intensity_bins}
+            # Iterate over intensity bins
+            for intensity_bin in intensity_bins:
+                # Pull composite and store
+                key, _, composite_mean = composite.planar_compositor(model, data[model][experiment]['data'], intensity_bin, field, pressure_level=pressure_level)
+                # Populate the dictionary for the given intensity bin
+                data[model][experiment]['composite'][intensity_bin] = composite_mean
+
+    # Define control and experiment names (assume both are in the density dictionary)
+    run_control, run_experiment = ['control', 'swishe']
+    # Define name for difference subdictionary
+    run_difference = '{1} - {0}'.format(run_control, run_experiment)
+    
+    # Collect composites. Note: the differences will be calculated after this loop series.
+    # Note: composite dictionary is structured top-down as: (1) intensity bin, (2) model, (3) experiment
+    composites = {}
+    # Pass 1: Iterate through experiments to get each experiment's density data.
+    for intensity_bin in intensity_bins:
+        # Initialize subdictionary for intensity bins
+        composites[intensity_bin] = {}
+        # Iterate over all models
+        for model in data.keys():
+            # Initialize subdictionary for the iterand model
+            composites[intensity_bin][model] = {}
+            # Iterate over each given experiment
+            for experiment in [run_control, run_experiment]:
+                composites[intensity_bin][model][experiment] = data[model][experiment]['composite'][intensity_bin]
+    # Pass 2: Iterate through experiments to get the differences.
+    for intensity_bin in intensity_bins:
+        for model in data.keys():
+            # Populate the dictionary
+            composites[intensity_bin][model][run_difference] = composites[intensity_bin][model][run_experiment] - composites[intensity_bin][model][run_control]
+            
+    ''' Get normalizations and colormaps. '''
+    # Define colormap. To be modified when field-specific colormaps are accessed.
+    cmap = 'bwr' if '-' in experiment_plot else 'viridis'
+    # Initialize normalization and colormaps. Normalizations will be intensity_bin specific. Save into dictionary for future use in colorbars.
+    norms = {intensity_bin: None for intensity_bin in intensity_bins}
+    bounds = 12 # number of levels to bin for the normalization
+    # Iterate over intensity bins to populate norms. Only use the prescribed experiment (dictated by experiment_plot) for
+    for intensity_bin in intensity_bins:
+        # Initialize extrema for this intensity bin
+        vmin, vmax = [min([np.nanmin(sv) for k, v in composites[intensity_bin].items() for sk, sv in v.items() if sk == experiment_plot]),
+                      max([np.nanmax(sv) for k, v in composites[intensity_bin].items() for sk, sv in v.items() if sk == experiment_plot])]
+        # Assign to normalization dictionary
+        norms[intensity_bin] = matplotlib.colors.BoundaryNorm(np.linspace(vmin, vmax, bounds+1), 256)
+        
+    ''' Begin plotting. '''
+    # Note: number of rows is dictated by number of models, number of columns is dictated by number of intensity bins
+    nrows, ncols = len(data.keys()), len(intensity_bins)
+    # Initialize figure and grid
+    fig, grid = plt.figure(figsize=(2.5*ncols, 2.5*nrows), constrained_layout=True), matplotlib.gridspec.GridSpec(nrows=nrows, ncols=ncols)
+    
+    # Iterate over intensity bins (columns)
+    for intensity_bin_index, intensity_bin in enumerate(composites.keys()):
+        # Iterate over models (rows)
+        for model_index, model_name in enumerate(composites[intensity_bin].keys()):
+            ax = fig.add_subplot(grid[model_index, intensity_bin_index])
+            im = ax.pcolormesh(composites[intensity_bin][model_name][experiment_plot].grid_xt, composites[intensity_bin][model_name][experiment_plot].grid_yt, 
+                               composites[intensity_bin][model_name][experiment_plot], norm=norms[intensity_bin], cmap=cmap)
+            # Add label for the model on the first column
+            if intensity_bin_index == 0:
+                ax.set_ylabel(model_name)
+            # Add label for the intensity bin on the first row
+            if model_index == 0:
+                # Subplot labeling
+                title_y = 1.05
+                # Set left-hand side to be {model name}, {min year} to {max year}
+                ax.annotate('{0}'.format(intensity_bin), (0, title_y), va='baseline', ha='left', xycoords='axes fraction', fontsize=10)
+            
+            
+            
 def density_grid(data, model_name, bin_resolution=5):
     """
     Method to plot the spatial density of unique TC occurrences given a track data dictionary. 
@@ -157,7 +250,7 @@ def density_grid(data, model_name, bin_resolution=5):
     cw_difference.set_axis_off()
     cax_difference = cw_difference.inset_axes([0, 0, 1, 1])
     colorbar_difference = fig.colorbar(matplotlib.cm.ScalarMappable(norms[run_difference], cmaps[run_difference]), 
-                                        orientation='horizontal', cax=cax_difference, format=matplotlib.ticker.FuncFormatter(fmt))
+                                       orientation='horizontal', cax=cax_difference, format=matplotlib.ticker.FuncFormatter(fmt))
 
 def pdf(data, param='center_lat', num_bins=60):
     

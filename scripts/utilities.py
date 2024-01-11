@@ -63,6 +63,7 @@ def access(model, experiment, storm_type, storm_id=None, processed=False):
         
     # Load the storm - random if no storm ID is given or found, storm ID if given and found
     if storm_exists:
+        print(filename)
         with open(filename, 'rb') as f:
             data = pickle.load(f)
     else:
@@ -373,3 +374,4 @@ def retrieve_tracked_TCs(model, experiment, storm_type, year_range, config=None)
         # Rename columns for future addition into xArray Dataset, and reset index
         data = data.rename(columns={'lon': 'center_lon', 'lat': 'center_lat', 'flag': 'core_temp', 'slp': 'min_slp'}).reset_index(drop=True)
         return data
+  

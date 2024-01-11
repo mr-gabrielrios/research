@@ -31,13 +31,15 @@ def retrieve_model_data(model, dirname, year_range, output_type='atmos_month', b
         start = time.time()
     
     # Identifier substring definition. This will be used for splitting the filename for identification purposes.
-    substring = '0101.' if model in ['AM2.5', 'HIRAM'] else '0001.'
+    substring = '0101.' if model in ['AM2.5', 'HIRAM'] else '0101.'
     # Access parent directory with experiment-specific model data and list directories corresponding to year range
     files = [os.path.join(dirname, file) for file in os.listdir(dirname) for year in range(min(year_range), max(year_range)) 
              if '{0:04d}'.format(year) in file.split(substring)[0] and output_type in file]
     # Store file data into an xArray Dataset.
     # Note: benchmarking showed ~1.5 s for opening 4 files using 'open_mfdataset', and at least 10x longer using 'open_dataset' + 'xr.concat'
     data = xr.open_mfdataset(files)
+    
+    print(files)
     
     if benchmarking:
         print('\t Model data retrieval time: {0:.3f} s'.format(time.time() - start))
@@ -131,15 +133,14 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
                 print('Unable to process:', storm_id)
                 pass
             
-        # Concatenate into unified Dataset for a storm   
+        # Concatenate into unified Dataset for a storm. 
+        # # If it doesn't work, continue to the next loop iteration. 
         try:
             # Assign storm identifier (storm_id)
             storm_xr = xr.concat(storm_xr, dim='time')
             storm_xr['storm_id'] = storm_id
         except:
-            for i in range(0, len(storm_xr)):
-                print(storm_xr[i].grid_xt.values)
-            pass
+            continue
         
         ''' Spatial clipping. '''
         # Part 1: compile model output from each timestamp in the storm dataset
@@ -217,7 +218,6 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
             temp_snapshot = snapshot.sel(time=timestamp, 
                                         grid_xt=np.arange(temp_center_lon-extent, temp_center_lon+extent),
                                         grid_yt=np.arange(temp_center_lat-extent, temp_center_lat+extent), method='nearest').drop_duplicates(['grid_xt'])
-            print(temp_snapshot)
             # Center-detection using chosen method (e.g., look for max(vort850), look for min(slp)
             if center_param == 'vort850':
                 center_detector = xr.where(abs(temp_snapshot[center_param]) == abs(temp_snapshot[center_param]).max().values, temp_snapshot[center_param], np.nan)
@@ -368,12 +368,12 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
                 output_type = 'atmos_daily'
             model_output = retrieve_model_data(model, model_dir, year_range=years, output_type=output_type)
             # Get tracked TCs from Lucas Harris' TC tracker
-            track_output, storm_track_output = utilities.retrieve_tracked_TCs(model, experiment, storm_type, year_range, config='individual_tc_storage')
+            track_output, storm_track_output = utilities.retrieve_tracked_TCs(model, experiment, storm_type, years, config='individual_tc_storage')
             # Check if any storms are found - if not, go to next loop
             if track_output is None or storm_track_output is None:
                 continue
-            # Pair model data to tracked TC for entire storm lifetime
-            storm_model_output, storm_ids = retrieve_model_TCs(model_dir, (min(year_range), max(year_range)), 
+            # Pair model data to tracked TC for entire storm lifetimeprint
+            storm_model_output, storm_ids = retrieve_model_TCs(model_dir, (min(years), max(years)), 
                                                                track_output, model_output, output_type='atmos_4xdaily', num_storms=num_storms)
             # Pair vertical model data to tracked TC for entire storm lifetime
             vertical_storm_output = vertical_profile_selection(storm_model_output, model, experiment)
@@ -404,7 +404,7 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
 if __name__ == '__main__':
     start = time.time()
     # Use range(start, stop) for a range of years between 'start' and 'stop', and a list [start, stop] for specific years.
-    year_range = range(2001, 2010)
+    year_range = range(2038, 2050)
     data = main('FLOR', experiments=['swishe'], storm_type='C15w', year_range=year_range, 
                 num_storms=10, storage=True, override=True)
     print('Elapsed total runtime: {0:.3f}s'.format(time.time() - start))
