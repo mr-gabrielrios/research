@@ -90,28 +90,70 @@ def planar_composite(data, intensity_bins, field, pressure_level, experiment_plo
         norms[intensity_bin] = matplotlib.colors.BoundaryNorm(np.linspace(vmin, vmax, bounds+1), 256)
         
     ''' Begin plotting. '''
-    # Note: number of rows is dictated by number of models, number of columns is dictated by number of intensity bins
-    nrows, ncols = len(data.keys()), len(intensity_bins)
-    # Initialize figure and grid
-    fig, grid = plt.figure(figsize=(2.5*ncols, 2.5*nrows), constrained_layout=True), matplotlib.gridspec.GridSpec(nrows=nrows, ncols=ncols)
+    # Note: number of rows is dictated by number of models (+1 for rows), number of columns is dictated by number of intensity bins
+    nrows, ncols = len(data.keys()) + 1, len(intensity_bins)
+    # Define height ratios as a function of the number of models
+    height_ratios = [1 if row != nrows-1 else 0.05 for row in range(0, nrows)]
+    # Initialize figure and grid. Note that nrows-1 is used to ignore the colorbar height.
+    fig, grid = [plt.figure(figsize=(2.5*ncols, 2.5*(nrows-1)), constrained_layout=True), 
+                 matplotlib.gridspec.GridSpec(nrows=nrows, ncols=ncols, height_ratios=height_ratios)]
     
     # Iterate over intensity bins (columns)
     for intensity_bin_index, intensity_bin in enumerate(composites.keys()):
         # Iterate over models (rows)
         for model_index, model_name in enumerate(composites[intensity_bin].keys()):
+            # Plot data
             ax = fig.add_subplot(grid[model_index, intensity_bin_index])
             im = ax.pcolormesh(composites[intensity_bin][model_name][experiment_plot].grid_xt, composites[intensity_bin][model_name][experiment_plot].grid_yt, 
                                composites[intensity_bin][model_name][experiment_plot], norm=norms[intensity_bin], cmap=cmap)
-            # Add label for the model on the first column
+            # Labeling: column operations for intensity bin
             if intensity_bin_index == 0:
-                ax.set_ylabel(model_name)
-            # Add label for the intensity bin on the first row
+                # Add label for the model on the first column
+                ax.set_ylabel(model_name, fontsize=10)
+            # Labeling: row operations for model name
             if model_index == 0:
-                # Subplot labeling
-                title_y = 1.05
-                # Set left-hand side to be {model name}, {min year} to {max year}
-                ax.annotate('{0}'.format(intensity_bin), (0, title_y), va='baseline', ha='left', xycoords='axes fraction', fontsize=10)
-            
+                # Hide tick labels as necessary (if not on last column or first row, hide them)
+                ax.xaxis.tick_top()
+                # Add label for the intensity bin on the first row
+                title_y = 1.25
+                ax.annotate('{0}'.format(intensity_bin), (0.5, title_y), 
+                            va='baseline', ha='center', xycoords='axes fraction', fontsize=10)
+            # Tick positioning: move xticks to top and hide if not the first row
+            if model_index == 0:
+                ax.xaxis.tick_top()
+            else:
+                ax.set_xticklabels([])
+            # Tick positioning: move yticks to right and hide if not the last column
+            if intensity_bin_index != ncols-1:
+                ax.set_yticklabels([])
+            else:
+                ax.yaxis.tick_right()
+    
+    ''' Create colorbars.'''
+    # Note that because normalizations are intensity bin specific, three colorbars will be made.
+    # Colorbar ticklabel formatter
+    # Iterate over intensity bins and create colorbars
+    for intensity_bin_index, intensity_bin in enumerate(composites.keys()):
+        # Get minimum and maximum for the intensity bin normalization
+        vmin, vmax = norms[intensity_bin].vmin, norms[intensity_bin].vmax
+        extremum = max([abs(vmin), abs(vmax)])
+        # Get the order of magnitude (oom) of the extremum, use the reciprocal to determine number of decimal points
+        oom = np.ceil(np.log10(1/extremum))
+        if oom < 0: # for large values
+            fmt = '%.0f'
+        elif oom > 2: # for small values
+            fmt = '%.1e'.format(int(oom))
+        else: # other
+            fmt = '%.{0}f'.format(int(oom))
+    
+        # Build the colorbar
+        cw = fig.add_subplot(grid[-1, intensity_bin_index]) # 'cw' stands for 'cax_wrapper'
+        cw.set_axis_off()
+        cax = cw.inset_axes([0, 0, 1, 1])
+        colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norms[intensity_bin], cmap), 
+                                orientation='horizontal', cax=cax, format=matplotlib.ticker.FormatStrFormatter(fmt))
+        # Hide every other ticklabel
+        [l.set_visible(False) for (i, l) in enumerate(cax.xaxis.get_ticklabels()) if i % 2 != 0]
             
             
 def density_grid(data, model_name, bin_resolution=5):
