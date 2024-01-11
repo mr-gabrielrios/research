@@ -2,26 +2,29 @@ import cftime, datetime
 import numpy as np, pandas as pd, scipy as sp, xarray as xr
 import os, pickle, random
 
+import warnings
+warnings.filterwarnings("ignore")
+
 def directories(model, experiment, data_type='model_output'):
     """
     Method to log the directories of all raw model runs and return a corresponding path.
     """
     
-    dirnames = {'AM2.5': {'control': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_tigercpu_intelmpi_18_540PE/analysis_lmh',
+    dirnames = {'AM2.5': {'control': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                       'model_output': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_tigercpu_intelmpi_18_540PE/POSTP'},
-                          'swishe': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/analysis_lmh',
+                          'swishe': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                       'model_output': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/POSTP'}},
                 'AM2.5C360': {'control': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5C360/work/CTL1990s_tigercpu_intelmpi_18_1080PE/analysis_lmh/cyclones_gav_ro110_330k',
                                           'model_output': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5C360/work/CTL1990s_tigercpu_intelmpi_18_1080PE/POSTP'},
                               'swishe': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5C360/work/CTL1990s_swishe_tigercpu_intelmpi_18_1080PE/analysis_lmh/cyclones_gav_ro110_330k',
                                          'model_output': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5C360/work/CTL1990s_swishe_tigercpu_intelmpi_18_1080PE/POSTP'}},
-                'FLOR': {'control': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_v201905_tigercpu_intelmpi_18_576PE/analysis_lmh',
+                'FLOR': {'control': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_v201905_tigercpu_intelmpi_18_576PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                      'model_output': '/tiger/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_v201905_tigercpu_intelmpi_18_576PE/POSTP'},
-                          'swishe': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_v201905_swishe_tigercpu_intelmpi_18_576PE/analysis_lmh',
+                          'swishe': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_v201905_swishe_tigercpu_intelmpi_18_576PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                      'model_output': '/tiger/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_v201905_swishe_tigercpu_intelmpi_18_576PE/POSTP'}},
-                'HIRAM': {'control': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/HIRAM/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/analysis_lmh',
+                'HIRAM': {'control': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/HIRAM/work/CTL1990s_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
                                       'model_output': '/tiger/scratch/gpfs/GEOCLIM/gr7610/HIRAM/work/CTL1990s_tigercpu_intelmpi_18_540PE/POSTP'},
-                          'swishe': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/HIRAM/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/analysis_lmh',
+                          'swishe': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/HIRAM/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
                                      'model_output': '/tiger/scratch/gpfs/GEOCLIM/gr7610/HIRAM/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/POSTP'}}}
     
     return dirnames[model][experiment][data_type]
@@ -245,7 +248,20 @@ def lmh_parser(path):
     
     return df
 
-def retrieve_tracked_TCs(model, experiment, storm_type, year_range):
+def storm_snapshot(storm, mode='lmi'):
+    ''' Grab single instance of storm from Pandas DataFrame (typically the 'track_output' key of 3-tiered data dictionaries). Could be genesis, LMI, or other. '''
+
+    # Pick selected mode
+    if mode == 'genesis': 
+        # Sort storm by time
+        storm = storm.sort_values('time', ascending=True)
+    elif mode == 'lmi': 
+        # Sort storm by maximum wind
+        storm = storm.sort_values('max_wnd', ascending=False)
+
+    return storm.iloc[[0]]
+
+def retrieve_tracked_TCs(model, experiment, storm_type, year_range, config=None):
     
     '''
     Function to collect tracked TC data and add derived data, such as duration and storm speed.
@@ -255,6 +271,7 @@ def retrieve_tracked_TCs(model, experiment, storm_type, year_range):
     - experiment (str):           name of experiment
     - storm_type (str):           type of storm to evaluate from TC tracks data ("TS" for all storms or "C15w" for hurricanes)
     - year_range (tuple of ints): 2-element tuple with a start and end year
+    - config (str or None):       string to indicate functionality depending on which script calls it
     Output(s):
     - data (Pandas DataFrame):    Pandas DataFrame with tracked TC data
     '''
@@ -289,7 +306,7 @@ def retrieve_tracked_TCs(model, experiment, storm_type, year_range):
     # Initialize empty duration column to populate iteratively
     data[['duration', 'speed', 'direction']] = np.nan
     # Initialize list to populate iteratively for each storm, then concatenate
-    storms = []
+    storms = {} if config == 'individual_tc_storage' else []
     # Iterate through each unique storm (identify by 'storm_id') and get duration
     for storm_id in data['storm_id'].unique():
         # Define iterand storm
@@ -331,12 +348,28 @@ def retrieve_tracked_TCs(model, experiment, storm_type, year_range):
         velocity['time'] = pd.to_datetime(velocity['time'])
         # Merge the storm and velocity DataFrames
         storm = storm.merge(velocity, how='left', on='time', suffixes=['_x', None]).drop(columns={'speed_x', 'direction_x'}).reset_index(drop=True)
-        # Append to the list for future concatenation
-        storms.append(storm)
-        
-    # Concatenate DataFrames
-    data = pd.concat(storms)   
-    # Rename columns for future addition into xArray Dataset, and reset index
-    data = data.rename(columns={'lon': 'center_lon', 'lat': 'center_lat', 'flag': 'core_temp', 'slp': 'min_slp'}).reset_index(drop=True)
-        
-    return data
+        # Allow functionality for individual TC storage (see individual_tc_storage.py)
+        if config == 'individual_tc_storage':   # Rename columns for future addition into xArray Dataset, and reset index
+            storm = storm.rename(columns={'lon': 'center_lon', 'lat': 'center_lat', 'flag': 'core_temp', 'slp': 'min_slp', 'max_wnd': 'max_wind'}).reset_index(drop=True)
+            # Append to the list for future concatenation
+            storms[storm_id] = storm
+        else:
+            # Append to the list for future concatenation
+            storms.append(storm)
+       
+    
+       
+    # Allow functionality for individual TC storage (see individual_tc_storage.py)
+    if config == 'individual_tc_storage':
+        # Concatenate DataFrames if storms are found. If not, return None.
+        if len(storms.values()) > 0:
+            data = pd.concat(storms.values())   
+        else:
+            data, storms = None, None
+        return data, storms
+    else:
+         # Concatenate DataFrames
+        data = pd.concat(storms)   
+        # Rename columns for future addition into xArray Dataset, and reset index
+        data = data.rename(columns={'lon': 'center_lon', 'lat': 'center_lat', 'flag': 'core_temp', 'slp': 'min_slp'}).reset_index(drop=True)
+        return data

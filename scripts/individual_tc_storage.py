@@ -14,100 +14,6 @@ import cartopy.crs as ccrs, matplotlib, matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings("ignore")
 
-def retrieve_tracked_TCs(dirname, storm_type, year_range, basins=None):
-
-    '''
-    Function to collect tracked TC data and add derived data, such as duration and storm speed.
-    
-    Input(s):
-    - dirname (str):              name of directory containing files of interest
-    - storm_type (str):           type of storm to evaluate from TC tracks data ("TS" for all storms or "C15w" for hurricanes)
-    - year_range (tuple of ints): 2-element tuple with a start and end year
-    Output(s):
-    - data (Pandas DataFrame):    Pandas DataFrame with tracked TC data
-    '''
-    
-    ''' File collection. '''
-    # Get filenames for all files within the specified directory 
-    # Filenames will correspond to the determined storm type
-    fnames = [[os.path.join(dirname, file, 'Harris.TC', f) for f in os.listdir(os.path.join(dirname, file, 'Harris.TC')) 
-               if '{0}.world'.format(storm_type) in f]
-               for file in sorted(os.listdir(dirname))]
-    # Compress 2D list to 1D list
-    fnames = [item for sublist in fnames for item in sublist]
-    # Select files with dates within 'year_range'
-    # Note: the '+ 1900' is added because tracked TCs are on the 2000 year range, whereas model output is on the 100 year range
-    # Note: conditional added as exception for provisional FLOR data ahead of 10th NE Tropical Workshop
-    if dirname == '/tigress/GEOCLIM/grios/HIRAM/exp/CTL1990_v201905/analysis_lmh/cyclones_gav_ro110_1C_330k':
-        fnames = [f for f in fnames]
-    else:
-        year_adjust = 0 if 'FLOR' in dirname else 1900
-        fnames = [f for f in fnames 
-                  if min(year_range) + year_adjust <= pd.to_datetime(f.split('.')[-2].split('-')[0]).year < max(year_range) + year_adjust]
-    
-    # Concatenate all tracked TC data from the filename list
-    data = pd.concat([utilities.lmh_parser(os.path.join(dirname, fname)) for fname in fnames])
-    
-    ''' Derived track-based data algorithm. Storm-specific derived properties will be generated in here. '''
-    
-    # Initialize empty duration column to populate iteratively
-    data[['duration', 'speed', 'direction']] = np.nan
-    # Initialize list to populate iteratively for each storm, then concatenate
-    storms = {}
-    # Iterate through each unique storm (identify by 'storm_id') and get duration
-    for storm_id in data['storm_id'].unique():
-        # Define iterand storm
-        storm = data.loc[data['storm_id'] == storm_id].copy().reset_index(drop=True)
-        
-        ''' Duration derivation. '''
-        # Get difference between minimum and maximum timestamps
-        dt = (storm['time'].max() - storm['time'].min())
-        # Convert difference timedelta into hours
-        dt = dt.days + dt.seconds/86400
-        # Add duration to the outer DataFrame for the corresponding storm
-        data.loc[data['storm_id'] == storm_id, 'duration'] = dt
-        # Re-define iterand storm to incorporate duration
-        storm = data.loc[data['storm_id'] == storm_id].copy().reset_index(drop=True)
-        
-        ''' Velocity (speed, direction) derivation. '''
-        # Initialize dictionary for preliminary storage. Will be reassigned into the DataFrame by the join() method using time as the matching criterion.
-        velocity = {'time': [storm.iloc[0]['time']], 'speed': [np.nan], 'direction': [np.nan]}
-        # Iterate over all of the iterand storm timestamps
-        for i in range(1, len(storm)):
-            # Define coordinates fofr two points considered (i, i-1)
-            lon_a, lat_a = [storm.iloc[i-1]['lon'], storm.iloc[i-1]['lat']]
-            lon_b, lat_b = [storm.iloc[i]['lon'], storm.iloc[i]['lat']]
-            # Determine timedelta between points (i, i-1)
-            dt = storm.iloc[i]['time'] - storm.iloc[i-1]['time']
-            # Derive speed (distance / time in m s^-1)
-            speed = utilities.coords_to_dist((lon_b, lat_b), (lon_a, lat_a))/dt.seconds
-            # Get changes in longtiude and latitude
-            dlon, dlat = lon_b - lon_a, lat_b - lat_a
-            # Derive direction relative to north (range of 0 to 360)
-            direction = 180*np.arctan(dlon/dlat)/np.pi % 360
-            # Append quantities to the 'velocity' dictionary
-            velocity['time'].append(storm.iloc[i]['time'])    
-            velocity['speed'].append(speed)    
-            velocity['direction'].append(direction)
-        # Build DataFrame
-        velocity = pd.DataFrame(velocity)
-        # Re-cast time column as a datetime object
-        velocity['time'] = pd.to_datetime(velocity['time'])
-        # Merge the storm and velocity DataFrames
-        storm = storm.merge(velocity, how='left', on='time', suffixes=['_x', None]).drop(columns={'speed_x', 'direction_x'}).reset_index(drop=True)
-        # Rename columns for future addition into xArray Dataset, and reset index
-        storm = storm.rename(columns={'lon': 'center_lon', 'lat': 'center_lat', 'flag': 'core_temp', 'slp': 'min_slp'}).reset_index(drop=True)
-        # Append to the list for future concatenation
-        storms[storm_id] = storm
-    
-    # Concatenate DataFrames if storms are found. If not, return None.
-    if len(storms.values()) > 0:
-        data = pd.concat(storms.values())   
-    else:
-        data, storms = None, None
-    
-    return data, storms
-
 def retrieve_model_data(model, dirname, year_range, output_type='atmos_month', benchmarking=False):
     
     '''
@@ -393,7 +299,7 @@ def vertical_profile_selection(storms, model, experiment):
                     timestamp = cftime.datetime(timestamp.year, timestamp.month, timestamp.day, hour=0, calendar='noleap')
             print('\t ---> Vertical timestamp out: {0}'.format(timestamp))
             # Get path name corresponding to model and experiment
-            model_dir, _ = utilities.dirnames(model, experiment, data_type='model_output')
+            model_dir = utilities.directories(model, experiment, data_type='model_output')
             # Pull full vertical output and select corresponding day
             vertical_profile = xr.open_dataset('{0}/{1:04d}0101.{2}.nc'.format(model_dir, timestamp.year, output_type))
             # Filter by time and spatial domain
@@ -445,7 +351,7 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
     for experiment_num, experiment in enumerate(experiments):
         # data[model][experiment] = {}
         # Define paths to model- and experiment-specific data.
-        model_dir, track_dir = utilities.dirnames(model, experiment, data_type='model_output'), utilities.dirnames(model, experiment, data_type='track_data')
+        model_dir, track_dir = utilities.directories(model, experiment, data_type='model_output'), utilities.directories(model, experiment, data_type='track_data')
     
         # For a given year:
         for year in year_range:
@@ -462,7 +368,7 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
                 output_type = 'atmos_daily'
             model_output = retrieve_model_data(model, model_dir, year_range=years, output_type=output_type)
             # Get tracked TCs from Lucas Harris' TC tracker
-            track_output, storm_track_output  = retrieve_tracked_TCs(track_dir, storm_type, year_range=years, basins=None)
+            track_output, storm_track_output = utilities.retrieve_tracked_TCs(model, experiment, storm_type, year_range, config='individual_tc_storage')
             # Check if any storms are found - if not, go to next loop
             if track_output is None or storm_track_output is None:
                 continue
@@ -499,6 +405,6 @@ if __name__ == '__main__':
     start = time.time()
     # Use range(start, stop) for a range of years between 'start' and 'stop', and a list [start, stop] for specific years.
     year_range = range(2001, 2010)
-    data = main('FLOR', experiments=['control', 'swishe'], storm_type='C15w', year_range=year_range, 
+    data = main('FLOR', experiments=['swishe'], storm_type='C15w', year_range=year_range, 
                 num_storms=10, storage=True, override=True)
     print('Elapsed total runtime: {0:.3f}s'.format(time.time() - start))
