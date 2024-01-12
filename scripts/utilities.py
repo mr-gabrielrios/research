@@ -43,12 +43,14 @@ def access(model, experiment, storm_type, storm_id=None, processed=False):
         data (dict): 3-element dictionary with track outputs from Lucas Harris' TC tracker, planar model outputs from the chosen GCM, and vertical outputs from the chosen GCM
     """
     
-    # Define addendum if proessed data is being accessed
+    # Define addendum if processed data is being accessed
     addendum = '/processed' if processed else ''
     # Retrieve filenames
     dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs{0}'.format(addendum)
     files = [os.path.join(dirname, filename) for filename in os.listdir(dirname)
             if model in filename and experiment in filename and storm_type in filename]
+    # Initialize filename container
+    filename = None
     # If a specific storm ID is given, check for it
     storm_exists = False # check for storm existence - True if exists
     if storm_id:
@@ -63,7 +65,6 @@ def access(model, experiment, storm_type, storm_id=None, processed=False):
         
     # Load the storm - random if no storm ID is given or found, storm ID if given and found
     if storm_exists:
-        print(filename)
         with open(filename, 'rb') as f:
             data = pickle.load(f)
     else:

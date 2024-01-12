@@ -35,7 +35,7 @@ def load(models, experiments, num_storms=-1):
                         if (model in f) and (experiment in f)][:num_storms]
             print('\t Storms to be processed: {0}'.format(storm_ids))
             # Initialize a storage list for the storms 
-            data[model][experiment] = []
+            data[model][experiment] = {'data': []}
             # Iterate over all storms found
             for storm_id in storm_ids:
                 # Access the processed data
@@ -45,7 +45,7 @@ def load(models, experiments, num_storms=-1):
                 #       but it's the easiest way to obtain radius-dependent data
                 print('\t \t Processing {0} from {1}'.format(storm_id, storm_filename))
                 # Append to storage list
-                data[model][experiment].append(storm)
+                data[model][experiment]['data'].append(storm)
         
     return data
 
@@ -157,6 +157,6 @@ def tc_track_data(models, experiments, storm_type='C15w', snapshot_type='lmi', y
             
     return data
 
-# if __name__ == '__main__':
-#     models, experiments = ['HIRAM'], ['control', 'swishe']
-#     data = load(models, experiments, num_storms=10)
+if __name__ == '__main__':
+    models, experiments = ['HIRAM'], ['control', 'swishe']
+    data = load(models, experiments, num_storms=5)

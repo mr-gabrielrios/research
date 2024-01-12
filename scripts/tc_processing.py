@@ -68,7 +68,7 @@ def storage(data, filename=None, override=True):
     storage_path = os.path.join(storage_dirname, storage_filename)
         
     # If file doesn't exist, save
-    if not os.path.isfile(storage_path) and override:
+    if not os.path.isfile(storage_path) or override:
         with open(storage_path, 'wb') as f:
             print('Storing data at {0}'.format(storage_path))
             pickle.dump(data, f)
@@ -89,14 +89,16 @@ def main(model, experiment, storm_type, storm_id=None):
     
 if __name__ == '__main__':
     # Define loading parameters
-    model, experiment, storm_type = 'AM2.5', 'control', 'C15w'
+    models, experiments, storm_type = ['FLOR'], ['control', 'swishe'], 'C15w'
     # Single storm load    
     storm_ids = ['2052-0034']
     # Multi-storm load
     num_storms = -1 # enter -1 to get all
-    storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] 
-                 for f in os.listdir('/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs')
-                 if (model in f) and (experiment in f)][:num_storms]
     # Load storms
-    for storm_id in storm_ids:
-        data = main(model, experiment, storm_type, storm_id=storm_id)
+    for model in models:
+        for experiment in experiments:
+            storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] 
+                        for f in os.listdir('/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs')
+                        if (model in f) and (experiment in f)][:num_storms]
+            for storm_id in storm_ids:
+                data = main(model, experiment, storm_type, storm_id=storm_id)

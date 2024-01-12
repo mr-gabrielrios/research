@@ -49,6 +49,7 @@ def planar_compositor(model, datasets, intensity_bin, field, pressure_level=None
         # Get the matching timestamps between the track output and the corresponding dictionary with field data
         index_timestamps = [t for t in times if t in ds[subdict][field].time.values]
         # and field + vertical level from the vertical data
+        # This try/except is supposed to catch duplicate time indices in ds[subdict]
         try:
             ds = ds[subdict][field].sel(time=index_timestamps).sel(pfull=pressure_level, method='nearest') if pressure_level else ds[subdict][field].sel(time=index_timestamps)
         except:
@@ -150,8 +151,16 @@ def azimuthal_compositor(model, datasets, intensity_bin, field):
             return None, None
         # Get the matching timestamps between the track output and the corresponding dictionary with field data
         index_timestamps = [t for t in times if t in ds[subdict][field].time.values]
-        # and field + vertical level from the vertical data
-        ds = ds[subdict][field].sel(time=index_timestamps)
+        
+        # This try/except is supposed to catch duplicate time indices in ds[subdict]
+        try:
+            ds = ds[subdict][field].sel(time=index_timestamps)
+        except:
+            # Check for duplicate time values
+            ds[subdict] = ds[subdict].drop_duplicates('time')
+            # Now try reloading
+            ds = ds[subdict][field].sel(time=index_timestamps)
+        # If timestamps match, proceed. Else, continue.
         if len(ds.time.values) > 0:
             # Populate dictionary with data. Limit to one entry per storm by choosing the first timestamp.
             data[storm_id] = {key: ds.isel(time=0).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')}
@@ -256,7 +265,7 @@ def azimuthal_compositor(model, datasets, intensity_bin, field):
         composite_mean = xr.DataArray(data=np.nanmean(np.stack([v[key] for v in data.values()]), axis=0), 
                                       dims=['radius'], coords={'radius': (['radius'], sample_dataset['radius'].values)})
     
-    return data, composite_mean
+    return key, data, composite_mean
 
 # if __name__ == '__main__':
 #     dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs/processed'

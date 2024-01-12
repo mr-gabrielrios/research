@@ -23,6 +23,29 @@ def cmap_white_adjust(cmap):
     
     return cm
 
+def get_cmap(field, norm):
+    """
+    Method to pull colormap for a given field from a .csv with colormap info.
+
+    Args:
+        field (str): field of interest
+        norm (matplotlib.colors.Normalize): normalization with data to extract values from
+
+    Returns:
+        colormap: matplotlib.colors.colormap
+    """
+    
+    print('Colormap field: {0}'.format(field))
+    # Get colormap DataFrame from .csv
+    colormaps = pd.read_csv('/projects/GEOCLIM/gr7610/reference/param_colormaps.csv')
+    # Get field-specific colormap. If field is not in colormaps, default to 'other'.
+    if field in colormaps['param'].unique():
+        colormap = colormaps.loc[colormaps['param'] == field]
+    else:
+        colormap = colormaps.loc[colormaps['param'] == 'other']
+    
+    return colormap['difference'].item() if (norm.vmin < 0 and norm.vmax > 0) else colormap['normal'].item()
+
 def planar_composite(data, intensity_bins, field, pressure_level, experiment_plot='control'):
     """
     Method to obtain planar composite for prescribed data for a given field.
@@ -81,8 +104,6 @@ def planar_composite(data, intensity_bins, field, pressure_level, experiment_plo
                                                                                     'grid_xt': (['grid_xt'], composites[intensity_bin][model][run_control]['grid_xt'].values)})
             
     ''' Get normalizations and colormaps. '''
-    # Define colormap. To be modified when field-specific colormaps are accessed.
-    cmap = 'bwr' if '-' in experiment_plot else 'viridis'
     # Initialize normalization and colormaps. Normalizations will be intensity_bin specific. Save into dictionary for future use in colorbars.
     norms = {intensity_bin: None for intensity_bin in intensity_bins}
     bounds = 12 # number of levels to bin for the normalization
@@ -91,8 +112,15 @@ def planar_composite(data, intensity_bins, field, pressure_level, experiment_plo
         # Initialize extrema for this intensity bin
         vmin, vmax = [min([np.nanmin(sv) for k, v in composites[intensity_bin].items() for sk, sv in v.items() if sk == experiment_plot]),
                       max([np.nanmax(sv) for k, v in composites[intensity_bin].items() for sk, sv in v.items() if sk == experiment_plot])]
+        # Subdivide normalization into sequential (all one sign) or diverging (two signs, including 0) bins
+        if vmin < 0 and vmax > 0:
+            # Get larger of the two bounds
+            extremum = max([abs(vmin), abs(vmax)])
+            bins = np.concatenate([np.linspace(-extremum, 0, int(bounds/2))[:-1], [0], np.linspace(0, extremum, int(bounds/2))[1:]])
+        else:
+            bins = np.linspace(vmin, vmax, bounds+1)
         # Assign to normalization dictionary
-        norms[intensity_bin] = matplotlib.colors.BoundaryNorm(np.linspace(vmin, vmax, bounds+1), 256)
+        norms[intensity_bin] = matplotlib.colors.BoundaryNorm(bins, 256)
         
     ''' Begin plotting. '''
     # Note: number of rows is dictated by number of models (+1 for rows), number of columns is dictated by number of intensity bins
@@ -107,10 +135,23 @@ def planar_composite(data, intensity_bins, field, pressure_level, experiment_plo
     for intensity_bin_index, intensity_bin in enumerate(composites.keys()):
         # Iterate over models (rows)
         for model_index, model_name in enumerate(composites[intensity_bin].keys()):
+            # Define colormap. To be modified when field-specific colormaps are accessed.
+            # Note: this is in here because the colormap is normalization-specific due to data being used to define the colormap
+            cmaps[intensity_bin] = get_cmap(field, norms[intensity_bin])
             # Plot data
             ax = fig.add_subplot(grid[model_index, intensity_bin_index])
             im = ax.pcolormesh(composites[intensity_bin][model_name][experiment_plot].grid_xt, composites[intensity_bin][model_name][experiment_plot].grid_yt, 
-                               composites[intensity_bin][model_name][experiment_plot], norm=norms[intensity_bin], cmap=cmap)
+                               composites[intensity_bin][model_name][experiment_plot], norm=norms[intensity_bin], cmap=cmaps[intensity_bin])
+            
+            # Tick formatting
+            # Strategy: place minor ticks at 1-degree intervals, but make sure upper and lower limits are integers
+            dx, dy = 1, 1
+            x_min, x_max = composites[intensity_bin][model_name][experiment_plot].grid_xt.min(), composites[intensity_bin][model_name][experiment_plot].grid_xt.max()
+            y_min, y_max = composites[intensity_bin][model_name][experiment_plot].grid_yt.min(), composites[intensity_bin][model_name][experiment_plot].grid_yt.max()
+            gridline_x_minor, gridline_y_minor = np.arange(np.floor(x_min), np.floor(x_max), 1), np.arange(np.floor(y_min), np.floor(y_max), 1)
+            ax.xaxis.set_minor_locator(matplotlib.ticker.FixedLocator(gridline_x_minor))
+            ax.yaxis.set_minor_locator(matplotlib.ticker.FixedLocator(gridline_y_minor))
+            
             # Labeling: column operations for intensity bin
             if intensity_bin_index == 0:
                 # Add label for the model on the first column
@@ -133,6 +174,7 @@ def planar_composite(data, intensity_bins, field, pressure_level, experiment_plo
                 ax.set_yticklabels([])
             else:
                 ax.yaxis.tick_right()
+            
     
     ''' Create colorbars.'''
     # Note that because normalizations are intensity bin specific, three colorbars will be made.
@@ -154,12 +196,10 @@ def planar_composite(data, intensity_bins, field, pressure_level, experiment_plo
         cw = fig.add_subplot(grid[-1, intensity_bin_index]) # 'cw' stands for 'cax_wrapper'
         cw.set_axis_off()
         cax = cw.inset_axes([0, 0, 1, 1])
-        colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norms[intensity_bin], cmap), 
+        colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norms[intensity_bin], cmaps[intensity_bin]), 
                                 orientation='horizontal', cax=cax, format=matplotlib.ticker.FormatStrFormatter(fmt))
         # Hide every other ticklabel
         [l.set_visible(False) for (i, l) in enumerate(cax.xaxis.get_ticklabels()) if i % 2 != 0]
-        
-    return composites
             
 def azimuthal_composite(data, intensity_bins, field, experiment_plot='control'):
     """
@@ -190,7 +230,7 @@ def azimuthal_composite(data, intensity_bins, field, experiment_plot='control'):
     # Define control and experiment names (assume both are in the density dictionary)
     run_control, run_experiment = ['control', 'swishe']
     # Define name for difference subdictionary
-    run_difference = '{1} - {0}'.format(run_control, run_experiment)
+    run_difference = '{1}-{0}'.format(run_control, run_experiment)
     
     # Collect composites. Note: the differences will be calculated after this loop series.
     # Note: composite dictionary is structured top-down as: (1) intensity bin, (2) model, (3) experiment
@@ -206,15 +246,21 @@ def azimuthal_composite(data, intensity_bins, field, experiment_plot='control'):
             # Iterate over each given experiment
             for experiment in [run_control, run_experiment]:
                 composites[intensity_bin][model][experiment] = data[model][experiment]['composite'][intensity_bin]
+                print(composites[intensity_bin][model][experiment])
     # Pass 2: Iterate through experiments to get the differences.
     for intensity_bin in intensity_bins:
         for model in data.keys():
-            # Populate the dictionary
-            composites[intensity_bin][model][run_difference] = composites[intensity_bin][model][run_experiment] - composites[intensity_bin][model][run_control]
-            
+            # Get raw difference (this is done the brute force way due to artificial xArray mismatches despite proper dimension alignment)
+            delta = composites[intensity_bin][model][run_experiment].values - composites[intensity_bin][model][run_control].values
+            # Populate the dictionary with reconstructed xArray. Handle 1D and 2D data differently.
+            if 'pfull' in composites[intensity_bin][model][run_experiment].dims:
+                composites[intensity_bin][model][run_difference] = xr.DataArray(data=delta, dims=['pfull', 'radius'],
+                                                                                coords={'pfull': (['pfull'], composites[intensity_bin][model][run_control]['pfull'].values), 
+                                                                                        'radius': (['radius'], composites[intensity_bin][model][run_control]['radius'].values)})
+            else:
+                composites[intensity_bin][model][run_difference] = xr.DataArray(data=delta, dims=['radius'], coords={'radius': (['radius'], composites[intensity_bin][model][run_control]['radius'].values)})
+                
     ''' Get normalizations and colormaps. '''
-    # Define colormap. To be modified when field-specific colormaps are accessed.
-    cmap = 'bwr' if '-' in experiment_plot else 'viridis'
     # Initialize normalization and colormaps. Normalizations will be intensity_bin specific. Save into dictionary for future use in colorbars.
     norms = {intensity_bin: None for intensity_bin in intensity_bins}
     bounds = 12 # number of levels to bin for the normalization
@@ -223,28 +269,62 @@ def azimuthal_composite(data, intensity_bins, field, experiment_plot='control'):
         # Initialize extrema for this intensity bin
         vmin, vmax = [min([np.nanmin(sv) for k, v in composites[intensity_bin].items() for sk, sv in v.items() if sk == experiment_plot]),
                       max([np.nanmax(sv) for k, v in composites[intensity_bin].items() for sk, sv in v.items() if sk == experiment_plot])]
+        # Subdivide normalization into sequential (all one sign) or diverging (two signs, including 0) bins
+        if vmin < 0 and vmax > 0:
+            # Get larger of the two bounds
+            extremum = max([abs(vmin), abs(vmax)])
+            bins = np.concatenate([np.linspace(-extremum, 0, int(bounds/2))[:-1], [0], np.linspace(0, extremum, int(bounds/2))[1:]])
+        else:
+            bins = np.linspace(vmin, vmax, bounds+1)
         # Assign to normalization dictionary
-        norms[intensity_bin] = matplotlib.colors.BoundaryNorm(np.linspace(vmin, vmax, bounds+1), 256)
-        
+        norms[intensity_bin] = matplotlib.colors.BoundaryNorm(bins, 256)
+    # Initialize colormap for use in colorbars
+    cmaps = {intensity_bin: None for intensity_bin in intensity_bins}
+    
     ''' Begin plotting. '''
     # Note: number of rows is dictated by number of models (+1 for rows), number of columns is dictated by number of intensity bins
     nrows, ncols = len(data.keys()) + 1, len(intensity_bins)
     # Define height ratios as a function of the number of models
     height_ratios = [1 if row != nrows-1 else 0.05 for row in range(0, nrows)]
     # Initialize figure and grid. Note that nrows-1 is used to ignore the colorbar height.
-    fig, grid = [plt.figure(figsize=(2.5*ncols, 2.5*(nrows-1)), constrained_layout=True), 
+    fig, grid = [plt.figure(figsize=(2*ncols, 3*(nrows-1)), constrained_layout=True), 
                  matplotlib.gridspec.GridSpec(nrows=nrows, ncols=ncols, height_ratios=height_ratios)]
     
     # Iterate over intensity bins (columns)
     for intensity_bin_index, intensity_bin in enumerate(composites.keys()):
         # Iterate over models (rows)
         for model_index, model_name in enumerate(composites[intensity_bin].keys()):
-            # Plot data
+            # Initialize subplot
             ax = fig.add_subplot(grid[model_index, intensity_bin_index])
-            im = ax.contourf(composites[intensity_bin][model_name][experiment_plot].radius, composites[intensity_bin][model_name][experiment_plot].pfull, 
-                             composites[intensity_bin][model_name][experiment_plot], norm=norms[intensity_bin], cmap=cmap)
-            # Invert y-axis
-            ax.set_ylim(ax.get_ylim()[::-1])
+            # A split occurs here: if data is 1D (azimuthally-composited planar values), process one ways. Else, process another.
+            if 'pfull' in composites[intensity_bin][model_name][experiment_plot].dims:
+                # Define colormap. To be modified when field-specific colormaps are accessed.
+                # Note: this is in here because the colormap is normalization-specific due to data being used to define the colormap
+                cmaps[intensity_bin] = get_cmap(field, norms[intensity_bin])
+                # Plot data.
+                im = ax.contourf(composites[intensity_bin][model_name][experiment_plot].radius, composites[intensity_bin][model_name][experiment_plot].pfull, 
+                                 composites[intensity_bin][model_name][experiment_plot], norm=norms[intensity_bin], cmap=cmaps[intensity_bin])
+                # Invert y-axis
+                ax.set_ylim(ax.get_ylim()[::-1])
+                # Tick positioning: move yticks to right and hide if not the last column
+                if intensity_bin_index != ncols-1:
+                    ax.set_yticklabels([])
+                else:
+                    ax.yaxis.tick_right()
+            else:
+                # Create horizontal line to denote 0
+                ax.axhline([0], lw=0.5, c='k')
+                # Smooth the data with a quadratic interpolation 
+                # Substep 1: create a basis vector with some multiple number of spaces relative to the input
+                interp_basis = np.linspace(composites[intensity_bin][model_name][experiment_plot].radius.min(),
+                                           composites[intensity_bin][model_name][experiment_plot].radius.max(),
+                                           4*len(composites[intensity_bin][model_name][experiment_plot].radius))
+                # Substep 2: perform the interpolation
+                interp_composite = composites[intensity_bin][model_name][experiment_plot].interp(radius=interp_basis)
+                # Plot data.
+                im = ax.plot(interp_composite.radius, interp_composite, lw=2)
+                # Modify y-axis to fit data maxima
+                ax.set_ylim([norms[intensity_bin].vmin, norms[intensity_bin].vmax])
             # Labeling: column operations for intensity bin
             if intensity_bin_index == 0:
                 # Add label for the model on the first column
@@ -262,36 +342,32 @@ def azimuthal_composite(data, intensity_bins, field, experiment_plot='control'):
                 ax.xaxis.tick_top()
             else:
                 ax.set_xticklabels([])
-            # Tick positioning: move yticks to right and hide if not the last column
-            if intensity_bin_index != ncols-1:
-                ax.set_yticklabels([])
-            else:
-                ax.yaxis.tick_right()
     
     ''' Create colorbars.'''
     # Note that because normalizations are intensity bin specific, three colorbars will be made.
     # Colorbar ticklabel formatter
-    # Iterate over intensity bins and create colorbars
-    for intensity_bin_index, intensity_bin in enumerate(composites.keys()):
-        # Get minimum and maximum for the intensity bin normalization
-        vmin, vmax = norms[intensity_bin].vmin, norms[intensity_bin].vmax
-        extremum = max([abs(vmin), abs(vmax)])
-        # Get the order of magnitude (oom) of the extremum, use the reciprocal to determine number of decimal points
-        oom = np.ceil(np.log10(1/extremum))
-        if oom < 0: # for large values
-            fmt = '%.0f'
-        elif oom > 2: # for small values
-            fmt = '%.1e'.format(int(oom))
-        else: # other
-            fmt = '%.{0}f'.format(int(oom))
-        # Build the colorbar
-        cw = fig.add_subplot(grid[-1, intensity_bin_index]) # 'cw' stands for 'cax_wrapper'
-        cw.set_axis_off()
-        cax = cw.inset_axes([0, 0, 1, 1])
-        colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norms[intensity_bin], cmap), 
-                                orientation='horizontal', cax=cax, format=matplotlib.ticker.FormatStrFormatter(fmt))
-        # Hide every other ticklabel
-        [l.set_visible(False) for (i, l) in enumerate(cax.xaxis.get_ticklabels()) if i % 2 != 0]
+    # Iterate over intensity bins and create colorbars - only if pressure coordinates in data
+    if 'pfull' in composites[intensity_bin][model_name][run_control].dims:
+        for intensity_bin_index, intensity_bin in enumerate(composites.keys()):
+            # Get minimum and maximum for the intensity bin normalization
+            vmin, vmax = norms[intensity_bin].vmin, norms[intensity_bin].vmax
+            extremum = max([abs(vmin), abs(vmax)])
+            # Get the order of magnitude (oom) of the extremum, use the reciprocal to determine number of decimal points
+            oom = np.ceil(np.log10(1/extremum))
+            if oom < 0: # for large values
+                fmt = '%.0f'
+            elif oom > 2: # for small values
+                fmt = '%.1e'.format(int(oom))
+            else: # other
+                fmt = '%.{0}f'.format(int(oom))
+            # Build the colorbar
+            cw = fig.add_subplot(grid[-1, intensity_bin_index]) # 'cw' stands for 'cax_wrapper'
+            cw.set_axis_off()
+            cax = cw.inset_axes([0, 0, 1, 1])
+            colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norms[intensity_bin], cmaps[intensity_bin]), 
+                                    orientation='horizontal', cax=cax, format=matplotlib.ticker.FormatStrFormatter(fmt))
+            # Hide every other ticklabel
+            [l.set_visible(False) for (i, l) in enumerate(cax.xaxis.get_ticklabels()) if i % 2 != 0]
             
 def density_grid(data, model_name, bin_resolution=5):
     """
