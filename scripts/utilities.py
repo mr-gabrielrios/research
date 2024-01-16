@@ -167,31 +167,58 @@ def domain_differentiation(data, distance, field, dim):
         c = xr.DataArray(data=np.concatenate((a.values, b_), axis=2), dims=a.dims)
     return c
 
-def intensity_binning(data, intensity_metric='max_wind'):
+def intensity_binning(mode='track_output', data=None, intensity_metric='max_wind'):
     """
     Method to generate bins for TC intensities to support compositing based on a given intensity metric.
     Note: this is chosen to be performed post-storage to keep raw TC data as clean as possible from metadata additions, in case of future definition changes.
     Note: the intensity metric will either be by maximum winds (max_wind) or minimum sea-level pressure (min_slp).
+    
+    Args:
+        mode (str):  analysis mode for the counting. Can either be (1) 'track_output' or (2) 'model_output'.
+                     (1) 'track_output' refers to output from tc_analysis.tc_track_data(). 
+                         This is meant to catalog all storms detected in the model runs, but not necessarily all analyzed for planar/azimuthal fields.
+                     (2) 'model_output' refers to the 'track_output' from tc_analysis.tc_model_data().
+                         This is meant to catalog all storms used for analysis for planar/azimuthal fields.
+                     (3) all other entries will return a list of the intensity bins
+        data (dict): dictionary output to match data accepted by 'track_output' or 'model_output'. See above for descriptions.
     """
 
     # Define the intensity bins
     if intensity_metric == 'max_wind':
-        intensity_bin_limits = [0, 15, 20, 25, 30, 35, 40, np.inf]
+        intensity_bin_limits = [0, 10, 20, 30, np.inf] 
     elif intensity_metric == 'min_slp':
-        intensity_bin_limits = [np.inf, 1000, 990, 980, 960, 940, 920, 0]
+        intensity_bin_limits = [np.inf, 1000, 970, 940, 0]
     # Create the bin data structure, with bin numbers as keys and bin bounds and data as subdictionaries
     intensity_bins = {'b{0}'.format(i): {'bounds': (intensity_bin_limits[i], intensity_bin_limits[i+1]), 'storms': []} 
                     for i in range(0, len(intensity_bin_limits)-1)} 
-    # Initialize data intensity bin column
-    data['track_output']['intensity_bin'] = np.nan
-    # Iterate over all bin and assign to each timestamp
-    for bin, bin_data in intensity_bins.items():
-        # Get intensity bounds
-        min_bound, max_bound = min(intensity_bins[bin]['bounds']), max(intensity_bins[bin]['bounds'])
-        # Assign bin name to timestamp
-        data['track_output'].loc[(min_bound <= data['track_output'][intensity_metric]) & (data['track_output'][intensity_metric] < max_bound), 'intensity_bin'] = bin
+     
+    # Create copy of input data
+    if mode == 'track_output':
+        binned_data = data.copy()
+    elif mode == 'model_output':
+        binned_data = data['track_output'].copy()
+    
+    # Return intensity bins if a mode isn't specified, otherwise process as normal
+    if mode in ['track_output', 'model_output']:
+        # Initialize data intensity bin column
+        binned_data['intensity_bin'] = np.nan
+        
+        # Iterate over all bin and assign to each timestamp
+        for bin, bin_data in intensity_bins.items():
+            # Get intensity bounds
+            min_bound, max_bound = min(intensity_bins[bin]['bounds']), max(intensity_bins[bin]['bounds'])
+            # Assign bin name to timestamp
+            binned_data.loc[(min_bound <= binned_data[intensity_metric]) & (binned_data[intensity_metric] < max_bound), 'intensity_bin'] = bin
+        
+        # Append Series to the input dataset to return data in the same imput format
+        if mode == 'track_output':
+            data['intensity_bin'] = binned_data['intensity_bin']
+        elif mode == 'model_output':
+            data['track_output']['intensity_bin'] = binned_data['intensity_bin']
             
-    return data
+        return data
+    else:
+        return intensity_bins
 
 def lmh_parser(path):
     
@@ -259,7 +286,7 @@ def storm_snapshot(storm, mode='lmi'):
         storm = storm.sort_values('time', ascending=True)
     elif mode == 'lmi': 
         # Sort storm by maximum wind
-        storm = storm.sort_values('max_wnd', ascending=False)
+        storm = storm.sort_values('max_wind', ascending=False)
 
     return storm.iloc[[0]]
 

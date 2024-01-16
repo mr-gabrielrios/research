@@ -27,6 +27,12 @@ def derived_fields(model_name, data):
     data = derived.mse(data)
     # Add radial and tangential velocity components
     data = derived.radial_tangential_velocities(data)
+    # Horizontal moisture divergence
+    data = derived.scalar_divergence(data, field='h')
+    # Add column-integrated moist static energy
+    data = derived.vertical_integral(data, field='h')
+    # Column-integrated horizontal MSE divergence
+    data = derived.vertical_integral(data, field='flux_h')
     
     # If storm year is greater than or equal to 2052 for HIRAM runs, process all the fields
     if storm_year >= 2052 and model_name == 'HIRAM':
@@ -34,12 +40,6 @@ def derived_fields(model_name, data):
         data = derived.net_lw(data)
         # Columnwise net shortwave radiation
         data = derived.net_sw(data)
-        # Horizontal moisture divergence
-        data = derived.scalar_divergence(data, field='h')
-        # Add column-integrated moist static energy
-        data = derived.vertical_integral(data, field='h')
-        # Column-integrated horizontal MSE divergence
-        data = derived.vertical_integral(data, field='flux_h')
         
     return data
     
@@ -79,7 +79,7 @@ def main(model, experiment, storm_type, storm_id=None):
     filename, data = utilities.access(model, experiment, storm_type, storm_id)
     print(data['tc_vertical_output'].dims)
     # Assign intensity bins to each timestamp
-    data = utilities.intensity_binning(data, intensity_metric='max_wind')
+    data = utilities.intensity_binning(mode='model_output', data=data, intensity_metric='max_wind')
     # Process data and obtain derived fields
     data = derived_fields(model, data)
     # Store processed data
@@ -89,7 +89,7 @@ def main(model, experiment, storm_type, storm_id=None):
     
 if __name__ == '__main__':
     # Define loading parameters
-    models, experiments, storm_type = ['FLOR'], ['control', 'swishe'], 'C15w'
+    models, experiments, storm_type = ['AM2.5', 'FLOR', 'HIRAM'], ['control', 'swishe'], 'C15w'
     # Single storm load    
     storm_ids = ['2052-0034']
     # Multi-storm load

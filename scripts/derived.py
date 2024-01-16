@@ -281,6 +281,12 @@ def vertical_integral(data, field, bottom=950, top=100, benchmarking=False):
 def radial_tangential_velocities(data): 
     '''
     Calculate radial and tangential velocity components from zonal and meridional velocities.
+    
+    Args:
+        data (dict): 3-item dictionary with track output, model output (planar), and vertical output (vertical)
+    Returns:
+        data (dict): 3-item dictionary with track output, model output (planar), and vertical output (vertical)
+    
     '''
     
     # Pull vertical data from the dictionary

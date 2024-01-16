@@ -5,7 +5,7 @@ import os, pickle, random
 
 import composite, utilities
 
-def load(models, experiments, num_storms=-1):
+def tc_model_data(models, experiments, num_storms=-1):
     
     """
     Method to load data into a 3-tiered dictionary:
@@ -32,7 +32,9 @@ def load(models, experiments, num_storms=-1):
             # Pull storm IDs from matching file names, with storm ID of the format {YEAR}-{NUMBER}
             # Assume filename is of form: TC-{MODEL}-{EXPERIMENT}-{CATEGORY}-{YEAR}-{NUMBER}-max_wind-{MAX_WIND}-min_slp-{MIN_SLP}.pkl
             storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] for f in os.listdir(dirname)
-                        if (model in f) and (experiment in f)][:num_storms]
+                        if (model in f) and (experiment in f)]
+            # and randomly select 'num_storms' number of storms
+            storm_ids = random.sample(storm_ids, num_storms) if num_storms <= len(storm_ids) else storm_ids
             print('\t Storms to be processed: {0}'.format(storm_ids))
             # Initialize a storage list for the storms 
             data[model][experiment] = {'data': []}
@@ -48,61 +50,7 @@ def load(models, experiments, num_storms=-1):
                 data[model][experiment]['data'].append(storm)
         
     return data
-
-def counts(data):
-    
-    """
-    Method to gather number of storms in each experiment.
-
-    Args:
-        data (dict): 3-tiered dictionary: (1) model name, 
-                                          (2) experiment type,
-                                          (3) TC data with [a] track output, [b] model output (planar), [c] model output (vertical)
-
-    Returns:
-        counts (Pandas DataFrame): table with data of interest
-    """
-    
-    # Define intensity bins. This is subject to change every time the binning algorithm is updated.
-    # Pre-definition is used to catalog instances where 0 records are found.
-    intensity_bins = ['b{0}'.format(i) for i in range(0, 7)]
-    
-    # Initialize dictionaries: one for TC counts, one for snapshot counts by intensity bin
-    storm_counts, bin_counts = {}, {}
-    # Iterate over models
-    for model in data.keys():
-        storm_counts[model], bin_counts[model] = {}, {}
-        # Iterate over experiments
-        for experiment in data[model].keys():
-            # Iterate through all track output data to obtain an aggregate DataFrame
-            aggregate = pd.concat([data[model][experiment][i]['track_output'] for i in range(0, len(data[model][experiment]))])
-            # Log how many individual TCs exist in this configuration
-            storm_count = len(aggregate['storm_id'].unique())
-            # Initialize dictionary exclusive to the model + experiment configuration
-            storm_counts[model][experiment], bin_counts[model][experiment] = storm_count, {}
-            # Get number of timestamps per intensity bin and append to dictionary
-            for intensity_bin in intensity_bins:
-                # Get instances in this intensity bin
-                instances = aggregate.loc[aggregate['intensity_bin'] == intensity_bin]
-                # Add number of instances to dictionary
-                bin_counts[model][experiment][intensity_bin] = len(instances)
-
-    # For storm bin counts
-    # Re-arrange dictionary to allow for MultiIndex DataFrame construction (MultiIndex is the model name, column is the experiment name, index is the intensity bin)
-    storm_counts = {(model_key, experiment_key): {'count': experiment_values} for model_key, model_values in storm_counts.items() 
-                    for experiment_key, experiment_values in model_values.items()}
-    # Build the DataFrame
-    storm_counts = pd.DataFrame.from_dict(storm_counts, orient='columns')
-    
-    # For intensity bin counts
-    # Re-arrange dictionary to allow for MultiIndex DataFrame construction (MultiIndex is the model name, column is the experiment name, index is the intensity bin)
-    bin_counts = {(model_key, experiment_key): experiment_values for model_key, model_values in bin_counts.items() 
-                  for experiment_key, experiment_values in model_values.items()}
-    # Build the DataFrame
-    bin_counts = pd.DataFrame.from_dict(bin_counts, orient='columns')
-    
-    return storm_counts, bin_counts
-    
+  
 def tc_track_data(models, experiments, storm_type='C15w', snapshot_type='lmi', year_range=None):
     """
     Method to extract track data (output from Lucas Harris' TC tracker).
@@ -134,6 +82,10 @@ def tc_track_data(models, experiments, storm_type='C15w', snapshot_type='lmi', y
             # Initialize dictionary for the model + experiment configuration
             # Note: two keys are added - raw (for raw data, includes all data for each TC) and unique (includes single data point for each TC)
             data[model][experiment] = {'raw': utilities.retrieve_tracked_TCs(model, experiment, storm_type, model_year_range), 'unique': None}
+            # Rename maximum wind columns
+            data[model][experiment]['raw'] = data[model][experiment]['raw'].rename(columns={'max_wnd': 'max_wind'})
+            # Get intensity bins for all storms
+            data[model][experiment]['raw'] = utilities.intensity_binning(mode='track_output', data=data[model][experiment]['raw'])
             # Get unique TC storm IDs from the raw data
             storm_ids = data[model][experiment]['raw']['storm_id'].unique()
             # Initialize list to hold unique TC data
@@ -157,6 +109,70 @@ def tc_track_data(models, experiments, storm_type='C15w', snapshot_type='lmi', y
             
     return data
 
-if __name__ == '__main__':
-    models, experiments = ['HIRAM'], ['control', 'swishe']
-    data = load(models, experiments, num_storms=5)
+def counts(mode='track_output', data=None):
+    
+    """
+    Method to gather number of storms in each experiment.
+
+    Args:
+        mode (str):  analysis mode for the counting. Can either be (1) 'track_output' or (2) 'model_output'.
+                     (1) 'track_output' refers to output from tc_analysis.tc_track_data(). 
+                         This is meant to catalog all storms detected in the model runs, but not necessarily all analyzed for planar/azimuthal fields.
+                     (2) 'model_output' refers to the 'track_output' from tc_analysis.tc_model_data().
+                         This is meant to catalog all storms used for analysis for planar/azimuthal fields.
+        data (dict): dictionary output to match data accepted by 'track_output' or 'model_output'. See above for descriptions.
+        
+    Returns:
+        counts (Pandas DataFrame): table with data of interest
+    """
+    
+    # Define intensity bins. This is subject to change every time the binning algorithm is updated.
+    # Pre-definition is used to catalog instances where 0 records are found.
+    intensity_bins = [k for k in utilities.intensity_binning(mode='bin_data', data=None, intensity_metric='max_wind').keys()]
+    
+    # Initialize dictionaries: one for TC counts, one for snapshot counts by intensity bin
+    storm_counts, bin_counts = {}, {}
+    # Iterate over models
+    for model in data.keys():
+        storm_counts[model], bin_counts[model] = {}, {}
+        # Iterate over experiments
+        for experiment in data[model].keys():
+            # Build an aggregate DataFrame based on data input mode
+            if mode == 'model_output':
+                # Iterate through all track output data to obtain an aggregate DataFrame
+                aggregate = pd.concat([data[model][experiment][i]['track_output'] for i in range(0, len(data[model][experiment]))])
+                # Log how many individual TCs exist in this configuration
+                storm_count = len(aggregate['storm_id'].unique())
+            elif mode == 'track_output':
+                # Iterate through all track output data to obtain an aggregate DataFrame
+                aggregate = data[model][experiment]['raw']
+                # Log how many individual TCs exist in this configuration
+                storm_count = len(aggregate['storm_id'].unique())
+            # Initialize dictionary exclusive to the model + experiment configuration
+            storm_counts[model][experiment], bin_counts[model][experiment] = storm_count, {}
+            # Get number of timestamps per intensity bin and append to dictionary
+            for intensity_bin in intensity_bins:
+                # Get instances in this intensity bin
+                instances = aggregate.loc[aggregate['intensity_bin'] == intensity_bin]
+                # Add number of instances to dictionary
+                bin_counts[model][experiment][intensity_bin] = len(instances)
+
+    # For storm bin counts
+    # Re-arrange dictionary to allow for MultiIndex DataFrame construction (MultiIndex is the model name, column is the experiment name, index is the intensity bin)
+    storm_counts = {(model_key, experiment_key): {'count': experiment_values} for model_key, model_values in storm_counts.items() 
+                    for experiment_key, experiment_values in model_values.items()}
+    # Build the DataFrame
+    storm_counts = pd.DataFrame.from_dict(storm_counts, orient='columns')
+    
+    # For intensity bin counts
+    # Re-arrange dictionary to allow for MultiIndex DataFrame construction (MultiIndex is the model name, column is the experiment name, index is the intensity bin)
+    bin_counts = {(model_key, experiment_key): experiment_values for model_key, model_values in bin_counts.items() 
+                  for experiment_key, experiment_values in model_values.items()}
+    # Build the DataFrame
+    bin_counts = pd.DataFrame.from_dict(bin_counts, orient='columns')
+    
+    return storm_counts, bin_counts
+  
+# if __name__ == '__main__':
+#     models, experiments = ['HIRAM'], ['control', 'swishe']
+#     data = tc_model_data(models, experiments, num_storms=5)

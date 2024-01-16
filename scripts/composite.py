@@ -59,21 +59,33 @@ def planar_compositor(model, datasets, intensity_bin, field, pressure_level=None
             ds = ds[subdict][field].sel(time=index_timestamps).sel(pfull=pressure_level, method='nearest') if pressure_level else ds[subdict][field].sel(time=index_timestamps)
         # If timestamps match, proceed. Else, continue.
         if len(ds.time.values) > 0:
+            print('\t \t {0} has {1} matching timestamps! Further processing them now...'.format(storm_id, len(ds.time.values)))
+            # Methodology: extract all timestamps with matching intensity for the given storm and assign them a storm 'sub-ID', which preserves the storm ID but gives it a unique identifier.
+            storm_subids = [] # create storage list for all storm sub-IDs to be generated
             # Populate dictionary with data. Limit to one entry per storm by choosing the first timestamp.
-            data[storm_id] = {key: ds.isel(time=0).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')}
-            # Check to see if the extents are less than the minima. If so, make the new minima
-            if (min_x == None) or (len(data[storm_id][key].grid_xt) < min_x):
-                min_x = len(data[storm_id][key].grid_xt)
-            if (min_y == None) or (len(data[storm_id][key].grid_yt) < min_y):
-                min_y = len(data[storm_id][key].grid_yt)
+            for i in range(0, len(ds.time.values)):
+                # Assign the storm sub-ID
+                storm_subid = '{0}_{1:03d}'.format(storm_id, i)
+                # Extract all nans
+                data[storm_subid] = {key: ds.isel(time=i).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')}
+                # Append to storage list
+                storm_subids.append(storm_subid)
+                print('\t \t \t {0} created, continuing...'.format(storm_subid))
+            for storm_subid in storm_subids:
+                # Check to see if the extents are less than the minima. If so, make the new minima
+                if (min_x == None) or (len(data[storm_subid][key].grid_xt) < min_x):
+                    min_x = len(data[storm_subid][key].grid_xt)
+                if (min_y == None) or (len(data[storm_subid][key].grid_yt) < min_y):
+                    min_y = len(data[storm_subid][key].grid_yt)
         else:
+            print('\t \t {0} was not processed since no timestamps were found...'.format(storm_id))
             continue
     
     # Define buffer to prevent edge effects of domain trimming. 
     # Will be applied to each edge, such that the final domain will be 2*buffer less after trimming.
     buffer = 1
     
-    # Iterate over each storm and trim
+    # Iterate over each storm and its sub-IDs and trim
     for storm_id in data.keys():
         # Make minimum domain lengths even by reducing frame size, if not even
         min_x = min_x - 1 if min_x % 2 == 1 else min_x
@@ -86,8 +98,8 @@ def planar_compositor(model, datasets, intensity_bin, field, pressure_level=None
         # Slice the domain
         data[storm_id][key] = data[storm_id][key].isel(grid_xt=slice_x, grid_yt=slice_y)
         # Flip the data about the x-axis if the center latitude is < 0 (for Southern Hemisphere storms).
-        if data[storm_id][key].isel(grid_yt=center_y)['grid_yt'] < 0:
-            data[storm_id][key] = np.flip(data[storm_id][key], axis=0)
+        # if data[storm_id][key].isel(grid_yt=center_y)['grid_yt'] < 0:
+        #     data[storm_id][key] = np.flip(data[storm_id][key], axis=0)
     
     # Get composite mean over all storms by averaging along the 0th axis (storm ID axis)
     composite_mean = np.nanmean(np.stack([v[key] for v in data.values()]), axis=0)

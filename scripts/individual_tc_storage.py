@@ -404,7 +404,7 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
 if __name__ == '__main__':
     start = time.time()
     # Use range(start, stop) for a range of years between 'start' and 'stop', and a list [start, stop] for specific years.
-    year_range = range(125, 150)
-    data = main('HIRAM', experiments=['swishe'], storm_type='C15w', year_range=year_range, 
-                num_storms=10, storage=True, override=True)
+    year_range = range(144, 145)
+    data = main('AM2.5', experiments=['swishe'], storm_type='C15w', year_range=year_range, 
+                num_storms=50, storage=True, override=True)
     print('Elapsed total runtime: {0:.3f}s'.format(time.time() - start))
