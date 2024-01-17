@@ -21,7 +21,7 @@ This `readme` is intended to provide a summary of what each figure is and how to
 	- Data: run `tc_analysis.tc_track_data(models=['AM2.5', 'FLOR', 'HIRAM'], experiments=['control', 'swish    e'], storm_type='C15w' OR 'TS', year_range=(101, 150))`
 	- Figure generation: run `visualization.pdf(track_data, 'center_lat', num_bins=40)`
 
-- `TC-field_slp-bin_b3.png'
+- `TC-planar_composite-field_slp-bin_b3.png'
 	- Summary: planar composite of sea-level pressure at the maximum intensity bin for all storms.
 	- Data: run `tc_analysis.tc_model_data(['AM2.5', 'FLOR', 'HIRAM'], ['control', 'swishe'], num_storms=50)
 	- Figure generation: run `visualization.planar_composite(data, ['AM2.5', 'FLOR', 'HIRAM'], ['b3'], 'slp', None,  ['control', 'swishe', 'swishe-control'])`
@@ -33,7 +33,7 @@ This `readme` is intended to provide a summary of what each figure is and how to
 		- Number of records used for the composite for HIRAM, control, b3: 86
 		- Number of records used for the composite for HIRAM, swishe, b3: 24
 
-- `TC-field_WVP-bin_b3.png'
+- `TC-planar_composite-field_WVP-bin_b3.png'
 	- Summary: planar composite of column-integ. water vapor at the maximum intensity bin for all storms.
 	- Data: run `tc_analysis.tc_model_data(['AM2.5', 'FLOR', 'HIRAM'], ['control', 'swishe'], num_storms=50)
 	- Figure generation: run `visualization.planar_composite(data, ['AM2.5', 'FLOR', 'HIRAM'], ['b3'], 'WVP', None,  ['control', 'swishe', 'swishe-control'])`
@@ -45,7 +45,7 @@ This `readme` is intended to provide a summary of what each figure is and how to
 		- Number of records used for the composite for HIRAM, control, b3: 86
 		- Number of records used for the composite for HIRAM, swishe, b3: 24
 
-- `TC-field_shflx-bin_b3.png'
+- `TC-planar_composite-field_shflx-bin_b3.png'
 	- Summary: planar composite of sensible heat flux at the maximum intensity bin for all storms.
 	- Data: run `tc_analysis.tc_model_data(['AM2.5', 'FLOR', 'HIRAM'], ['control', 'swishe'], num_storms=50)
 	- Figure generation: run `visualization.planar_composite(data, ['AM2.5', 'FLOR', 'HIRAM'], ['b3'], 'shflx', None,  ['control', 'swishe', 'swishe-control'])`
@@ -57,7 +57,7 @@ This `readme` is intended to provide a summary of what each figure is and how to
 		- Number of records used for the composite for HIRAM, control, b3: 86
 		- Number of records used for the composite for HIRAM, swishe, b3: 24
 
-- `TC-field_lhflx-bin_b3.png'
+- `TC-planar_composite-field_lhflx-bin_b3.png'
 	- Summary: planar composite of latent heat flux at the maximum intensity bin for all storms.
 	- Data: run `tc_analysis.tc_model_data(['AM2.5', 'FLOR', 'HIRAM'], ['control', 'swishe'], num_storms=50)
 	- Figure generation: run `visualization.planar_composite(data, ['AM2.5', 'FLOR', 'HIRAM'], ['b3'], 'shflx', None,  ['control', 'swishe', 'swishe-control'])`
@@ -68,5 +68,18 @@ This `readme` is intended to provide a summary of what each figure is and how to
 		- Number of records used for the composite for FLOR, swishe, b3: 20
 		- Number of records used for the composite for HIRAM, control, b3: 86
 		- Number of records used for the composite for HIRAM, swishe, b3: 24
+
+- `TC-azimuthal_composite-field_rh-bin_b3.png'
+	- Summary: planar composite of vertical pressure velocity at the maximum intensity bin for all storms.
+	- Data: run `tc_analysis.tc_model_data(['AM2.5', 'FLOR', 'HIRAM'], ['control', 'swishe'], num_storms=50)
+	- Figure generation: run `visualization.azimuthal_composite(data, ['AM2.5', 'FLOR', 'HIRAM'], ['b3'], 'rh',  ['control', 'swishe', 'swishe-control'])`
+	- Statistics:
+		- Number of records used for the composite for AM2.5, control, b3: 84
+		- Number of records used for the composite for AM2.5, swishe, b3: 5
+		- Number of records used for the composite for FLOR, control, b3: 322
+		- Number of records used for the composite for FLOR, swishe, b3: 20
+		- Number of records used for the composite for HIRAM, control, b3: 86
+		- Number of records used for the composite for HIRAM, swishe, b3: 24
+
 
 
