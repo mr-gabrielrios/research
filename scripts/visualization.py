@@ -62,7 +62,9 @@ def field_properties(field):
                   'wind': {'long_name': '10m horizontal wind speed', 'units': 'm s$^{-1}$'},
                   'WVP': {'long_name': 'column-integrated water vapor', 'units': 'kg m$^{-2}$'},
                   'h': {'long_name': 'moist static energy', 'units': 'J kg$^{-1}$'},
-                  'slp': {'long_name': 'sea level pressure', 'units': 'hPa'},}
+                  'slp': {'long_name': 'sea level pressure', 'units': 'hPa'},
+                  'omega': {'long_name': 'pressure velocity', 'units': 'Pa s$^{-1}$'},
+                  'rh': {'long_name': 'relative humidity', 'units': '%'},}
     
     if field in properties.keys():
         return properties[field]['long_name'], properties[field]['units']
@@ -95,6 +97,9 @@ def planar_composite(data, model_names, intensity_bins, field, pressure_level, e
     for model in model_names:
         # Iterate over the experiments provided in the dictionary
         for experiment in data[model].keys():
+            print('-------------------------------------------------------')
+            print('Processing experiment: {0}'.format(experiment))
+            print('-------------------------------------------------------')
             # Create subdictionaries for prescribed intensity bins
             data[model][experiment]['composite'] = {intensity_bin: None for intensity_bin in intensity_bins}
             # Create dictionary to hold number of records found for each intensity bin per experiment per model
@@ -104,6 +109,7 @@ def planar_composite(data, model_names, intensity_bins, field, pressure_level, e
                 # Pull composite and store
                 key, N, composite_mean = composite.planar_compositor(model, data[model][experiment]['data'], intensity_bin, field, pressure_level=pressure_level)
                 print('\t {0} records found for {1}, {2}, {3}'.format(len(N), model, experiment, intensity_bin))
+                print(composite_mean.shape)
                 # Populate the dictionaries for the given intensity bin
                 data[model][experiment]['composite'][intensity_bin] = composite_mean
                 data[model][experiment]['composite_records'][intensity_bin] = len(N)
@@ -127,13 +133,54 @@ def planar_composite(data, model_names, intensity_bins, field, pressure_level, e
     if '-' in ''.join(experiment_plots):
         for intensity_bin in intensity_bins:
             for model in composites[intensity_bin].keys():
-                # Get raw difference (this is done the brute force way due to artificial xArray mismatches despite proper dimension alignment)
-                delta = composites[intensity_bin][model][run_experiment].values - composites[intensity_bin][model][run_control].values
-                # Populate the dictionary with reconstructed xArray
-                composites[intensity_bin][model][run_difference] = xr.DataArray(data=delta, dims=['grid_yt', 'grid_xt'],
-                                                                            coords={'grid_yt': (['grid_yt'], composites[intensity_bin][model][run_control]['grid_yt'].values), 
-                                                                                    'grid_xt': (['grid_xt'], composites[intensity_bin][model][run_control]['grid_xt'].values)})
-            
+                try:
+                    # Get raw difference (this is done the brute force way due to artificial xArray mismatches despite proper dimension alignment)
+                    delta = composites[intensity_bin][model][run_experiment].values - composites[intensity_bin][model][run_control].values
+                    # Populate the dictionary with reconstructed xArray
+                    composites[intensity_bin][model][run_difference] = xr.DataArray(data=delta, dims=['grid_yt', 'grid_xt'],
+                                                                                coords={'grid_yt': (['grid_yt'], composites[intensity_bin][model][run_control]['grid_yt'].values), 
+                                                                                        'grid_xt': (['grid_xt'], composites[intensity_bin][model][run_control]['grid_xt'].values)})
+                except:
+                    # Get raw difference (this is done the brute force way due to artificial xArray mismatches despite proper dimension alignment)
+                    # Methodology: trim to common centers of data. In other words, find the smaller composite and trim the bigger one to their dimensions.
+                    
+                    # Get shape
+                    shape_control, shape_exp = composites[intensity_bin][model][run_control].shape, composites[intensity_bin][model][run_experiment].shape
+                    # Round decimal places for the coordinates (floating point precision errors lead to weird indexing)
+                    composites[intensity_bin][model][run_control]['grid_xt'] = composites[intensity_bin][model][run_control]['grid_xt'].round(3)
+                    composites[intensity_bin][model][run_control]['grid_yt'] = composites[intensity_bin][model][run_control]['grid_yt'].round(3)
+                    composites[intensity_bin][model][run_experiment]['grid_xt'] = composites[intensity_bin][model][run_experiment]['grid_xt'].round(3)
+                    composites[intensity_bin][model][run_experiment]['grid_yt'] = composites[intensity_bin][model][run_experiment]['grid_yt'].round(3)
+                    
+                    # Compare latitudes:
+                    if shape_control[0] < shape_exp[0]:
+                        temp = composites[intensity_bin][model][run_experiment].where((composites[intensity_bin][model][run_experiment]['grid_yt'] >= composites[intensity_bin][model][run_control]['grid_yt'].min())
+                                                                                    & (composites[intensity_bin][model][run_experiment]['grid_yt'] <= composites[intensity_bin][model][run_control]['grid_yt'].max()), drop=True)
+                        del composites[intensity_bin][model][run_experiment]
+                        composites[intensity_bin][model][run_experiment] = temp
+                    else:
+                        temp = composites[intensity_bin][model][run_control].where((composites[intensity_bin][model][run_control]['grid_yt'] >= composites[intensity_bin][model][run_experiment]['grid_yt'].min())
+                                                                                 & (composites[intensity_bin][model][run_control]['grid_yt'] <= composites[intensity_bin][model][run_experiment]['grid_yt'].max()), drop=True)
+                        del composites[intensity_bin][model][run_control]
+                        composites[intensity_bin][model][run_control] = temp
+                    # now longitudes
+                    if shape_control[1] < shape_exp[1]:
+                        temp = composites[intensity_bin][model][run_experiment].where((composites[intensity_bin][model][run_experiment]['grid_xt'] >= composites[intensity_bin][model][run_control]['grid_xt'].min())
+                                                                                    & (composites[intensity_bin][model][run_experiment]['grid_xt'] <= composites[intensity_bin][model][run_control]['grid_xt'].max()), drop=True)
+                        del composites[intensity_bin][model][run_experiment]
+                        composites[intensity_bin][model][run_experiment] = temp
+                    else:
+                        temp = composites[intensity_bin][model][run_control].where((composites[intensity_bin][model][run_control]['grid_xt'] >= composites[intensity_bin][model][run_experiment]['grid_xt'].min())
+                                                                                 & (composites[intensity_bin][model][run_control]['grid_xt'] <= composites[intensity_bin][model][run_experiment]['grid_xt'].max()), drop=True)
+                        del composites[intensity_bin][model][run_control]
+                        composites[intensity_bin][model][run_control] = temp
+                    delta = composites[intensity_bin][model][run_experiment].values - composites[intensity_bin][model][run_control].values
+                    
+                    # Populate the dictionary with reconstructed xArray
+                    composites[intensity_bin][model][run_difference] = xr.DataArray(data=delta, dims=['grid_yt', 'grid_xt'],
+                                                                                coords={'grid_yt': (['grid_yt'], composites[intensity_bin][model][run_control]['grid_yt'].values), 
+                                                                                        'grid_xt': (['grid_xt'], composites[intensity_bin][model][run_control]['grid_xt'].values)})
+                
     ''' Get normalizations and colormaps. '''
     # Initialize normalization and colormaps. Normalizations will be intensity_bin specific. Save into dictionary for future use in colorbars.
     norms = {intensity_bin: {run_control: None, run_experiment: None, run_difference: None} for intensity_bin in intensity_bins}
@@ -186,7 +233,7 @@ def planar_composite(data, model_names, intensity_bins, field, pressure_level, e
     # Initialize figure and grid. Note that nrows-1 is used to ignore the colorbar height.
     fig, grid = [plt.figure(figsize=(2*ncols, 2*(nrows-1)), constrained_layout=True), 
                  matplotlib.gridspec.GridSpec(nrows=nrows, ncols=ncols, height_ratios=height_ratios)]
-    
+    # Letter list
     # Iterate over intensity bins (columns)
     for intensity_bin_index, intensity_bin in enumerate(composites.keys()):
         # Iterate over models (rows)
@@ -200,6 +247,11 @@ def planar_composite(data, model_names, intensity_bins, field, pressure_level, e
                 ax = fig.add_subplot(grid[model_index, intensity_bin_index + experiment_index])
                 im = ax.pcolormesh(composites[intensity_bin][model_name][experiment_plot].grid_xt, composites[intensity_bin][model_name][experiment_plot].grid_yt, 
                                 composites[intensity_bin][model_name][experiment_plot], norm=norms[intensity_bin][experiment_plot], cmap=cmaps[intensity_bin][experiment_plot])
+                
+                # Subplot labeling - only label first rows
+                if model_index == 0:
+                    ax.annotate('({0})'.format(chr(ord('a') + intensity_bin_index + experiment_index)), xy=(0.05, 0.95), 
+                                xycoords='axes fraction', fontsize=9, color='k', alpha=0.75, **{'va': 'top'})
                 
                 # Tick formatting
                 # Strategy: place minor ticks at 1-degree intervals, but make sure upper and lower limits are integers
@@ -268,6 +320,10 @@ def planar_composite(data, model_names, intensity_bins, field, pressure_level, e
             vertical_level = ' at {0} hPa '.format(pressure_level) if pressure_level else ' '
             colorbar.set_label('[{1}]'.format(long_name, units, vertical_level), labelpad=10)
             
+    # Universal plot labels
+    fig.supxlabel('degrees from TC center', y=0.975, fontsize=10)   
+    fig.supylabel('degrees from TC center', x=1, rotation=270, fontsize=10)     
+
     ''' Output statistics to obtain sample sizes for each composite. '''
     # Iterate over the models provided in the dictionary
     for model in model_names:
@@ -275,6 +331,8 @@ def planar_composite(data, model_names, intensity_bins, field, pressure_level, e
         for experiment in data[model].keys():
             [print('Number of records used for the composite for {0}, {1}, {2}: {3}'.format(model, experiment, intensity_bin, 
                                                                                             data[model][experiment]['composite_records'][intensity_bin])) for intensity_bin in intensity_bins]
+       
+    # return data
             
 def azimuthal_composite(data, model_names, intensity_bins, field, experiment_plots=['control']):
     """
@@ -374,7 +432,7 @@ def azimuthal_composite(data, model_names, intensity_bins, field, experiment_plo
         if run_difference in experiments:
             # Find extrema for this experiment
             vmin, vmax = [min([np.nanmin(sv) for k, v in composites[intensity_bin].items() for sk, sv in v.items() if sk == run_difference]),
-                        max([np.nanmax(sv) for k, v in composites[intensity_bin].items() for sk, sv in v.items() if sk == run_difference])]
+                          max([np.nanmax(sv) for k, v in composites[intensity_bin].items() for sk, sv in v.items() if sk == run_difference])]
             # Subdivide normalization into sequential (all one sign) or diverging (two signs, including 0) bins
             if vmin < 0 and vmax > 0:
                 # Get larger of the two bounds
@@ -394,7 +452,7 @@ def azimuthal_composite(data, model_names, intensity_bins, field, experiment_plo
     # Define height ratios as a function of the number of models
     height_ratios = [1 if row != nrows-1 else 0.1 for row in range(0, nrows)]
     # Initialize figure and grid. Note that nrows-1 is used to ignore the colorbar height.
-    fig, grid = [plt.figure(figsize=(2*ncols, 2*(nrows-1)), constrained_layout=True), 
+    fig, grid = [plt.figure(figsize=(2.5*ncols, 2.5*(nrows-1)), constrained_layout=True), 
                  matplotlib.gridspec.GridSpec(nrows=nrows, ncols=ncols, height_ratios=height_ratios)]
     
     # Iterate over intensity bins (columns)
@@ -410,16 +468,18 @@ def azimuthal_composite(data, model_names, intensity_bins, field, experiment_plo
                     # Define colormap. To be modified when field-specific colormaps are accessed.
                     # Note: this is in here because the colormap is normalization-specific due to data being used to define the colormap
                     cmaps[intensity_bin][experiment_plot] = get_cmap(field, norms[intensity_bin][experiment_plot])
+                    print(experiment_plot, norms[intensity_bin][experiment_plot].vmin, norms[intensity_bin][experiment_plot].vmax)
                     # Plot data.
                     im = ax.contourf(composites[intensity_bin][model_name][experiment_plot].radius, composites[intensity_bin][model_name][experiment_plot].pfull, 
-                                    composites[intensity_bin][model_name][experiment_plot], norm=norms[intensity_bin][experiment_plot], cmap=cmaps[intensity_bin][experiment_plot])
+                                     composites[intensity_bin][model_name][experiment_plot], norm=norms[intensity_bin][experiment_plot], cmap=cmaps[intensity_bin][experiment_plot])
                     # Invert y-axis
                     ax.set_ylim(ax.get_ylim()[::-1])
                     # Tick positioning: move yticks to right and hide if not the last column
-                    if intensity_bin_index != ncols-1:
+                    ax.yaxis.tick_right()
+                    if (intensity_bin_index + experiment_index) != ncols-1:
                         ax.set_yticklabels([])
                     else:
-                        ax.yaxis.tick_right()
+                        ax.set_yticks([200, 500, 700, 850, 1000])
                 else:
                     # Create horizontal line to denote 0
                     ax.axhline([0], lw=0.5, c='k')
@@ -434,6 +494,12 @@ def azimuthal_composite(data, model_names, intensity_bins, field, experiment_plo
                     im = ax.plot(interp_composite.radius, interp_composite, lw=2)
                     # Modify y-axis to fit data maxima
                     ax.set_ylim([norms[intensity_bin][experiment_plot].vmin, norms[intensity_bin][experiment_plot].vmax])
+                    
+                # Subplot labeling - only label first rows
+                if model_index == 0:
+                    ax.annotate('({0})'.format(chr(ord('a') + intensity_bin_index + experiment_index)), (0.05, 0.95), xycoords='axes fraction', 
+                                fontsize=10, color='k', alpha=0.75, **{'va': 'top'})
+                    
                 # Labeling: column operations for intensity bin
                 if (intensity_bin_index + experiment_index) == 0:
                     # Add label for the model on the first column
@@ -454,9 +520,6 @@ def azimuthal_composite(data, model_names, intensity_bins, field, experiment_plo
                 else:
                     if model_index != 0:
                         ax.set_xticklabels([])
-                    # Tick positioning: move yticks to right and hide if not the last column
-                    if (intensity_bin_index + experiment_index) != ncols-1:
-                        ax.set_yticklabels([])
     
     ''' Create colorbars.'''
     # Note that because normalizations are intensity bin specific, three colorbars will be made.
@@ -470,12 +533,13 @@ def azimuthal_composite(data, model_names, intensity_bins, field, experiment_plo
                 extremum = max([abs(vmin), abs(vmax)])
                 # Get the order of magnitude (oom) of the extremum, use the reciprocal to determine number of decimal points
                 oom = np.ceil(np.log10(1/extremum))
+                print('Extremum: {0}, order of magnitude: {1}'.format(extremum, oom))
                 if oom < 0: # for large values
                     fmt = '%.0f'
                 elif oom > 2: # for small values
-                    fmt = '%.1e'.format(int(oom))
+                    fmt = '%.1e'.format(int(oom)+1)
                 else: # other
-                    fmt = '%.{0}f'.format(int(oom))
+                    fmt = '%.{0}f'.format(int(oom)+1)
                 # Build the colorbar
                 cw = fig.add_subplot(grid[-1, experiment_index]) # 'cw' stands for 'cax_wrapper'
                 cw.set_axis_off()
@@ -497,6 +561,7 @@ def azimuthal_composite(data, model_names, intensity_bins, field, experiment_plo
         for experiment in data[model].keys():
             [print('Number of records used for the composite for {0}, {1}, {2}: {3}'.format(model, experiment, intensity_bin, 
                                                                                             data[model][experiment]['composite_records'][intensity_bin])) for intensity_bin in intensity_bins]
+
             
 def density_grid(data, model_names=['AM2.5', 'FLOR', 'HIRAM'], bin_resolution=5):
     """

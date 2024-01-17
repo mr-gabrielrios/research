@@ -83,22 +83,23 @@ def main(model, experiment, storm_type, storm_id=None):
     # Process data and obtain derived fields
     data = derived_fields(model, data)
     # Store processed data
-    storage(data, filename=filename)
+    storage(data, filename=filename, override=True)
     
     return data
     
 if __name__ == '__main__':
     # Define loading parameters
-    models, experiments, storm_type = ['AM2.5', 'FLOR', 'HIRAM'], ['control', 'swishe'], 'C15w'
+    models, experiments, storm_type = ['AM2.5'], ['swishe'], 'C15w'
     # Single storm load    
     storm_ids = ['2052-0034']
     # Multi-storm load
-    num_storms = -1 # enter -1 to get all
+    num_storms = 50 # enter -1 to get all
     # Load storms
     for model in models:
         for experiment in experiments:
             storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] 
                         for f in os.listdir('/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs')
-                        if (model in f) and (experiment in f)][:num_storms]
+                        if (model in f) and (experiment in f)]
+            storm_ids = random.sample(storm_ids, num_storms) if num_storms < len(storm_ids) else storm_ids
             for storm_id in storm_ids:
                 data = main(model, experiment, storm_type, storm_id=storm_id)

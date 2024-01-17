@@ -32,11 +32,11 @@ def planar_compositor(model, datasets, intensity_bin, field, pressure_level=None
     for ds in datasets:
         # Get storm ID
         storm_id = ds['track_output']['storm_id'].unique().item()
-        print('\t Processing {0}...'.format(storm_id))
+        # print('\t Processing {0}...'.format(storm_id))
         # Get timestamps relevant to the intensity bin at hand
         times = ds['track_output']['time'].loc[ds['track_output']['intensity_bin'] == intensity_bin]
         # Change from Pandas to cftime formats
-        times = [utilities.time_adjust(model, t, method='pandas_to_cftime') for t in times]
+        times = [utilities.time_adjust(model, t, method='pandas_to_cftime') for t in times if not ((t.month == 2) & (t.day == 29))]
         # Determine which dictionary the field data is in
         subdict = None
         for sd in ['tc_model_output', 'tc_vertical_output']:
@@ -59,18 +59,21 @@ def planar_compositor(model, datasets, intensity_bin, field, pressure_level=None
             ds = ds[subdict][field].sel(time=index_timestamps).sel(pfull=pressure_level, method='nearest') if pressure_level else ds[subdict][field].sel(time=index_timestamps)
         # If timestamps match, proceed. Else, continue.
         if len(ds.time.values) > 0:
-            print('\t \t {0} has {1} matching timestamps! Further processing them now...'.format(storm_id, len(ds.time.values)))
+            # print('\t \t {0} has {1} matching timestamps! Further processing them now...'.format(storm_id, len(ds.time.values)))
             # Methodology: extract all timestamps with matching intensity for the given storm and assign them a storm 'sub-ID', which preserves the storm ID but gives it a unique identifier.
             storm_subids = [] # create storage list for all storm sub-IDs to be generated
             # Populate dictionary with data. Limit to one entry per storm by choosing the first timestamp.
-            for i in range(0, len(ds.time.values)):
-                # Assign the storm sub-ID
-                storm_subid = '{0}_{1:03d}'.format(storm_id, i)
-                # Extract all nans
-                data[storm_subid] = {key: ds.isel(time=i).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')}
-                # Append to storage list
-                storm_subids.append(storm_subid)
-                print('\t \t \t {0} created, continuing...'.format(storm_subid))
+            for i in range(0, len(ds.time.values)):   
+                # print(['2047', '2044', '2053', '2036', '2045', '2035'])
+                # Manual override for errant data in year 2053
+                if storm_id.split('-')[0] not in ''.join(['2053']):
+                    # Assign the storm sub-ID
+                    storm_subid = '{0}_{1:03d}'.format(storm_id, i)
+                    # Extract all nans
+                    data[storm_subid] = {key: ds.isel(time=i).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')}
+                    # Append to storage list
+                    storm_subids.append(storm_subid)
+                    # print('\t \t \t {0} created, continuing...'.format(storm_subid))
             for storm_subid in storm_subids:
                 # Check to see if the extents are less than the minima. If so, make the new minima
                 if (min_x == None) or (len(data[storm_subid][key].grid_xt) < min_x):
@@ -78,7 +81,7 @@ def planar_compositor(model, datasets, intensity_bin, field, pressure_level=None
                 if (min_y == None) or (len(data[storm_subid][key].grid_yt) < min_y):
                     min_y = len(data[storm_subid][key].grid_yt)
         else:
-            print('\t \t {0} was not processed since no timestamps were found...'.format(storm_id))
+            # print('\t \t {0} was not processed since no timestamps were found...'.format(storm_id))
             continue
     
     # Define buffer to prevent edge effects of domain trimming. 
@@ -172,15 +175,27 @@ def azimuthal_compositor(model, datasets, intensity_bin, field):
             ds[subdict] = ds[subdict].drop_duplicates('time')
             # Now try reloading
             ds = ds[subdict][field].sel(time=index_timestamps)
+            
         # If timestamps match, proceed. Else, continue.
         if len(ds.time.values) > 0:
+            print('\t \t {0} has {1} matching timestamps! Further processing them now...'.format(storm_id, len(ds.time.values)))
+            # Methodology: extract all timestamps with matching intensity for the given storm and assign them a storm 'sub-ID', which preserves the storm ID but gives it a unique identifier.
+            storm_subids = [] # create storage list for all storm sub-IDs to be generated
             # Populate dictionary with data. Limit to one entry per storm by choosing the first timestamp.
-            data[storm_id] = {key: ds.isel(time=0).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')}
-            # Check to see if the extents are less than the minima. If so, make the new minima
-            if (min_x == None) or (len(data[storm_id][key].grid_xt) < min_x):
-                min_x = len(data[storm_id][key].grid_xt)
-            if (min_y == None) or (len(data[storm_id][key].grid_yt) < min_y):
-                min_y = len(data[storm_id][key].grid_yt)
+            for i in range(0, len(ds.time.values)):
+                # Assign the storm sub-ID
+                storm_subid = '{0}_{1:03d}'.format(storm_id, i)
+                # Extract all nans
+                data[storm_subid] = {key: ds.isel(time=i).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')}
+                # Append to storage list
+                storm_subids.append(storm_subid)
+                print('\t \t \t {0} created, continuing...'.format(storm_subid))
+            for storm_subid in storm_subids:
+                # Check to see if the extents are less than the minima. If so, make the new minima
+                if (min_x == None) or (len(data[storm_subid][key].grid_xt) < min_x):
+                    min_x = len(data[storm_subid][key].grid_xt)
+                if (min_y == None) or (len(data[storm_subid][key].grid_yt) < min_y):
+                    min_y = len(data[storm_subid][key].grid_yt)
         else:
             continue
     
