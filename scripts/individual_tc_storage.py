@@ -46,7 +46,8 @@ def retrieve_model_data(model, dirname, year_range, output_type='atmos_month', b
     
     return data
 
-def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_type='atmos_daily', extent=15, num_storms=None, reference_time=None):
+def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_type='atmos_daily', extent=15, 
+                       num_storms=None, maximum_latitude=33, reference_time=None, override=False):
 
     # This boolean controls what frequency data is pulled at. Default to daily to allow for azimuthal compositing of vertical fields.
     timestamp_daily_freq = False if min(year_range) >= 157 else True
@@ -81,6 +82,10 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
     storm_counter = 0
     # Access model data that are specific to each tracked TC.
     for storm_index, storm_id in enumerate(storm_ids):
+        # Check if already processed. If so, skip it assuming override is False
+        if not override and storm_id in ''.join([f for f in os.listdir('/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs')]):
+            print('\t \t {0} has already been processed and overrides are not being processed. Continuing...'.format(storm_id))
+            continue
         # Pull tracked TC data relative to storm
         storm = storms.loc[storms['storm_id'] == storm_id]
         # Find timestamp corresponding to storm LMI. LMI is defined as timestamp with maximum wind.
@@ -91,7 +96,7 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
         
         ''' Pre-process filters. '''
         # 1. Ensure LMI occurs below a prescribed latitude
-        if abs(lmi['center_lat'].values) >= 30:
+        if abs(lmi['center_lat'].values) >= maximum_latitude:
             print('\t \t \t LMI occurs too far poleward for {0}, skipping...'.format(storm_id))
             continue
         # 2. Ensure LMI is not the first timestamp - this implies that it's a baroclinic storm.
@@ -304,6 +309,7 @@ def vertical_profile_selection(storms, model, experiment):
             vertical_profile = xr.open_dataset('{0}/{1:04d}0101.{2}.nc'.format(model_dir, timestamp.year, output_type))
             # Filter by time and spatial domain
             try:
+                print('\t \t Vertical extraction at {0} for filename {1}/{2:04d}0101.{3}.nc'.format(timestamp, model_dir, timestamp.year, output_type))
                 vertical_profile = vertical_profile.sel(time=timestamp, 
                                                         grid_xt=slice(min(grid_xt_bounds), max(grid_xt_bounds)), 
                                                         grid_yt=slice(min(grid_yt_bounds), max(grid_yt_bounds))).load()
@@ -318,30 +324,11 @@ def vertical_profile_selection(storms, model, experiment):
 
             output.append(vertical_profile)
             print('\t Successful processing of vertical timestamp.')
-        # Concatenate all timestamps
+        # The iteration is done to combat datasets with month 1 and day 1, which grab the whole year.
+        output = [out.isel(time=0) if 'time' in out.dims else out for out in output]
+        # Concatenate all timestamps and ensure each output only has one time index. 
         container[storm_id] = xr.concat(output, dim='time')
-
     return container
-
-def output_storage(data, models, experiments, storm_type, year_range):
-    ''' Method to store processed data, TC-specific. '''
-
-    dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage'
-    for model in models:
-        for experiment in experiments:
-            num = len(data[model][experiment]['tc_model_output'].time.values)
-            filename = 'tc_output.model-{0}.exp-{1}.storm_type-{2}.years-{3}_{4}.num-{5}.npy'.format(model, experiment, storm_type, min(year_range), max(year_range), num)
-            output_path = os.path.join(dirname, filename)
-
-            import sys
-            print('Object size: {0:.2f} B'.format(sys.getsizeof(data[model][experiment])))
-
-            try:
-                np.save(output_path, data[model][experiment])
-            except:
-                import pickle
-                with open(output_path, 'wb') as f:
-                    pickle.dump(data[model][experiment], f, protocol=pickle.HIGHEST_PROTOCOL)
 
 def main(model, experiments, storm_type, year_range, num_storms, storage=False, override=False):
 
@@ -394,7 +381,7 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
                     storage_filename = 'TC-{0}-{1}-{2}-{3}-max_wind-{4:0.0f}-min_slp-{5:0.0f}.pkl'.format(model, experiment, storm_type, storm_id, max_wind, min_slp)
                     storage_path = os.path.join(storage_dirname, storage_filename)
                     # If file doesn't exist, save
-                    if not os.path.isfile(os.path.join(storage_dirname, storage_filename)) and override:
+                    if not os.path.isfile(os.path.join(storage_dirname, storage_filename)):
                         with open(os.path.join(storage_dirname, storage_filename), 'wb') as f:
                             print('Saving to: ', os.path.join(storage_dirname, storage_filename))
                             pickle.dump(data[model][experiment][storm_id], f)
@@ -404,7 +391,7 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
 if __name__ == '__main__':
     start = time.time()
     # Use range(start, stop) for a range of years between 'start' and 'stop', and a list [start, stop] for specific years.
-    year_range = range(144, 145)
-    data = main('AM2.5', experiments=['swishe'], storm_type='C15w', year_range=year_range, 
+    year_range = range(2050, 2100)
+    data = main('FLOR', experiments=['swishe'], storm_type='C15w', year_range=year_range, 
                 num_storms=50, storage=True, override=True)
     print('Elapsed total runtime: {0:.3f}s'.format(time.time() - start))

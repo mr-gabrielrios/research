@@ -89,7 +89,7 @@ def main(model, experiment, storm_type, storm_id=None):
     
 if __name__ == '__main__':
     # Define loading parameters
-    models, experiments, storm_type = ['AM2.5'], ['swishe'], 'C15w'
+    models, experiments, storm_type = ['FLOR', 'HIRAM'], ['control', 'swishe'], 'C15w'
     # Single storm load    
     storm_ids = ['2052-0034']
     # Multi-storm load

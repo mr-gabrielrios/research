@@ -32,7 +32,7 @@ def planar_compositor(model, datasets, intensity_bin, field, pressure_level=None
     for ds in datasets:
         # Get storm ID
         storm_id = ds['track_output']['storm_id'].unique().item()
-        # print('\t Processing {0}...'.format(storm_id))
+        print('\t Processing {0}...'.format(storm_id))
         # Get timestamps relevant to the intensity bin at hand
         times = ds['track_output']['time'].loc[ds['track_output']['intensity_bin'] == intensity_bin]
         # Change from Pandas to cftime formats
@@ -51,29 +51,32 @@ def planar_compositor(model, datasets, intensity_bin, field, pressure_level=None
         # and field + vertical level from the vertical data
         # This try/except is supposed to catch duplicate time indices in ds[subdict]
         try:
-            ds = ds[subdict][field].sel(time=index_timestamps).sel(pfull=pressure_level, method='nearest') if pressure_level else ds[subdict][field].sel(time=index_timestamps)
+            dataset = ds[subdict][field].sel(time=index_timestamps).sel(pfull=pressure_level, method='nearest') if pressure_level else ds[subdict][field].sel(time=index_timestamps)
         except:
             # Check for duplicate time values
             ds[subdict] = ds[subdict].drop_duplicates('time')
             # Now try reloading
-            ds = ds[subdict][field].sel(time=index_timestamps).sel(pfull=pressure_level, method='nearest') if pressure_level else ds[subdict][field].sel(time=index_timestamps)
+            dataset = ds[subdict][field].sel(time=index_timestamps).sel(pfull=pressure_level, method='nearest') if pressure_level else ds[subdict][field].sel(time=index_timestamps)
         # If timestamps match, proceed. Else, continue.
-        if len(ds.time.values) > 0:
-            # print('\t \t {0} has {1} matching timestamps! Further processing them now...'.format(storm_id, len(ds.time.values)))
+        if len(dataset.time.values) > 0:
+            print('\t \t {0} has {1} matching timestamps! Further processing them now...'.format(storm_id, len(dataset.time.values)))
             # Methodology: extract all timestamps with matching intensity for the given storm and assign them a storm 'sub-ID', which preserves the storm ID but gives it a unique identifier.
             storm_subids = [] # create storage list for all storm sub-IDs to be generated
-            # Populate dictionary with data. Limit to one entry per storm by choosing the first timestamp.
-            for i in range(0, len(ds.time.values)):   
-                # print(['2047', '2044', '2053', '2036', '2045', '2035'])
-                # Manual override for errant data in year 2053
-                if storm_id.split('-')[0] not in ''.join(['2053']):
-                    # Assign the storm sub-ID
-                    storm_subid = '{0}_{1:03d}'.format(storm_id, i)
-                    # Extract all nans
-                    data[storm_subid] = {key: ds.isel(time=i).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')}
-                    # Append to storage list
-                    storm_subids.append(storm_subid)
-                    # print('\t \t \t {0} created, continuing...'.format(storm_subid))
+            ''' Populate dictionary with data. '''
+            # If one intensity bin is found in the dataset, limit to N strongest entries per storm by filtering the storm according to the matching timestamps.
+            num_timestamps = 5 if len(dataset.time.values) > 5 else len(dataset.time.values) # limit number of timestamp indices per storm to this number
+            timestamps = [utilities.time_adjust(model, t, method='cftime_to_pandas') for t in dataset.time.values if not ((t.month == 2) & (t.day == 29))] # Get Pandas-friendly timestamps for DataFrame indexing
+            timestamps = ds['track_output'].loc[ds['track_output']['time'].isin(timestamps)].sort_values('max_wind', ascending=False).iloc[0:num_timestamps]['time'] # Get N strongest timestamps
+            timestamps = [utilities.time_adjust(model, t, method='pandas_to_cftime') for t in timestamps] # Revert to cftime for DataArray indexing
+            # Process data for each filtered timestamp
+            for i, timestamp in enumerate(timestamps):   
+                # Assign the storm sub-ID
+                storm_subid = '{0}_{1:03d}'.format(storm_id, i)
+                # Extract all nans
+                data[storm_subid] = {key: dataset.sel(time=timestamp).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')}
+                # Append to storage list
+                storm_subids.append(storm_subid)
+                print('\t \t \t {0} created, continuing...'.format(storm_subid))
             for storm_subid in storm_subids:
                 # Check to see if the extents are less than the minima. If so, make the new minima
                 if (min_x == None) or (len(data[storm_subid][key].grid_xt) < min_x):
@@ -155,7 +158,7 @@ def azimuthal_compositor(model, datasets, intensity_bin, field):
         # Get timestamps relevant to the intensity bin at hand
         times = ds['track_output']['time'].loc[ds['track_output']['intensity_bin'] == intensity_bin]
         # Change from Pandas to cftime formats
-        times = [utilities.time_adjust(model, t, method='pandas_to_cftime') for t in times]
+        times = [utilities.time_adjust(model, t, method='pandas_to_cftime') for t in times if not ((t.month == 2) & (t.day == 29))]
         # Determine which dictionary the field data is in
         for sd in ['tc_model_output', 'tc_vertical_output']:
             if field in ds[sd].data_vars:
@@ -169,24 +172,30 @@ def azimuthal_compositor(model, datasets, intensity_bin, field):
         
         # This try/except is supposed to catch duplicate time indices in ds[subdict]
         try:
-            ds = ds[subdict][field].sel(time=index_timestamps)
+            dataset = ds[subdict][field].sel(time=index_timestamps)
         except:
             # Check for duplicate time values
             ds[subdict] = ds[subdict].drop_duplicates('time')
             # Now try reloading
-            ds = ds[subdict][field].sel(time=index_timestamps)
+            dataset = ds[subdict][field].sel(time=index_timestamps)
             
-        # If timestamps match, proceed. Else, continue.
-        if len(ds.time.values) > 0:
-            print('\t \t {0} has {1} matching timestamps! Further processing them now...'.format(storm_id, len(ds.time.values)))
+         # If timestamps match, proceed. Else, continue.
+        if len(dataset.time.values) > 0:
+            print('\t \t {0} has {1} matching timestamps! Further processing them now...'.format(storm_id, len(dataset.time.values)))
             # Methodology: extract all timestamps with matching intensity for the given storm and assign them a storm 'sub-ID', which preserves the storm ID but gives it a unique identifier.
             storm_subids = [] # create storage list for all storm sub-IDs to be generated
-            # Populate dictionary with data. Limit to one entry per storm by choosing the first timestamp.
-            for i in range(0, len(ds.time.values)):
+            ''' Populate dictionary with data. '''
+            # If one intensity bin is found in the dataset, limit to N strongest entries per storm by filtering the storm according to the matching timestamps.
+            num_timestamps = 5 if len(dataset.time.values) > 5 else len(dataset.time.values) # limit number of timestamp indices per storm to this number
+            timestamps = [utilities.time_adjust(model, t, method='cftime_to_pandas') for t in dataset.time.values if not ((t.month == 2) & (t.day == 29))] # Get Pandas-friendly timestamps for DataFrame indexing
+            timestamps = ds['track_output'].loc[ds['track_output']['time'].isin(timestamps)].sort_values('max_wind', ascending=False).iloc[0:num_timestamps]['time'] # Get N strongest timestamps
+            timestamps = [utilities.time_adjust(model, t, method='pandas_to_cftime') for t in timestamps] # Revert to cftime for DataArray indexing
+            # Process data for each filtered timestamp
+            for i, timestamp in enumerate(timestamps):   
                 # Assign the storm sub-ID
                 storm_subid = '{0}_{1:03d}'.format(storm_id, i)
                 # Extract all nans
-                data[storm_subid] = {key: ds.isel(time=i).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')}
+                data[storm_subid] = {key: dataset.sel(time=timestamp).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')}
                 # Append to storage list
                 storm_subids.append(storm_subid)
                 print('\t \t \t {0} created, continuing...'.format(storm_subid))

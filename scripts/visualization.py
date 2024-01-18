@@ -4,6 +4,11 @@ import matplotlib, matplotlib.pyplot as plt
 
 import composite, utilities
 
+class ScalarFormatterForceFormat(matplotlib.ticker.ScalarFormatter):
+    ''' This method is an override to the ScalarFormatter used to create a common scientific exponent for an axis. '''
+    def _set_format(self):  # Override function that finds format to use.
+        self.format = '%.3g'
+
 def cmap_white_adjust(cmap):
     ''' Adjust a given sequential monochromatic colormap to go from white to the monochrome. 
     
@@ -64,7 +69,11 @@ def field_properties(field):
                   'h': {'long_name': 'moist static energy', 'units': 'J kg$^{-1}$'},
                   'slp': {'long_name': 'sea level pressure', 'units': 'hPa'},
                   'omega': {'long_name': 'pressure velocity', 'units': 'Pa s$^{-1}$'},
-                  'rh': {'long_name': 'relative humidity', 'units': '%'},}
+                  'rh': {'long_name': 'relative humidity', 'units': '%'},
+                  'vi_h': {'long_name': 'vertically-integrated MSE', 'units': 'J m$^{-2}$'},
+                  'sphum': {'long_name': 'specific humidity', 'units': 'kg kg$^{-1}$'},
+                  'precip': {'long_name': 'inst. precip. rate', 'units': 'mm h$^{-1}$'},
+                  'h_anom': {'long_name': 'domainwise moist static energy anomaly', 'units': 'J kg$^{-1}$'}}
     
     if field in properties.keys():
         return properties[field]['long_name'], properties[field]['units']
@@ -97,9 +106,7 @@ def planar_composite(data, model_names, intensity_bins, field, pressure_level, e
     for model in model_names:
         # Iterate over the experiments provided in the dictionary
         for experiment in data[model].keys():
-            print('-------------------------------------------------------')
-            print('Processing experiment: {0}'.format(experiment))
-            print('-------------------------------------------------------')
+            print('\t Processing experiment: {0}'.format(experiment))
             # Create subdictionaries for prescribed intensity bins
             data[model][experiment]['composite'] = {intensity_bin: None for intensity_bin in intensity_bins}
             # Create dictionary to hold number of records found for each intensity bin per experiment per model
@@ -143,6 +150,7 @@ def planar_composite(data, model_names, intensity_bins, field, pressure_level, e
                 except:
                     # Get raw difference (this is done the brute force way due to artificial xArray mismatches despite proper dimension alignment)
                     # Methodology: trim to common centers of data. In other words, find the smaller composite and trim the bigger one to their dimensions.
+                    # Note: I wrote this stoned, so it can likely be optimized
                     
                     # Get shape
                     shape_control, shape_exp = composites[intensity_bin][model][run_control].shape, composites[intensity_bin][model][run_experiment].shape
@@ -247,11 +255,12 @@ def planar_composite(data, model_names, intensity_bins, field, pressure_level, e
                 ax = fig.add_subplot(grid[model_index, intensity_bin_index + experiment_index])
                 im = ax.pcolormesh(composites[intensity_bin][model_name][experiment_plot].grid_xt, composites[intensity_bin][model_name][experiment_plot].grid_yt, 
                                 composites[intensity_bin][model_name][experiment_plot], norm=norms[intensity_bin][experiment_plot], cmap=cmaps[intensity_bin][experiment_plot])
-                
                 # Subplot labeling - only label first rows
                 if model_index == 0:
+                    # Modify label color depending on darkness of the field for raw fields only, not difference plots
+                    label_color = 'white' if ((field in ['olr', 'h', 'h_anom']) and (experiment_plot != run_difference)) else 'k'
                     ax.annotate('({0})'.format(chr(ord('a') + intensity_bin_index + experiment_index)), xy=(0.05, 0.95), 
-                                xycoords='axes fraction', fontsize=9, color='k', alpha=0.75, **{'va': 'top'})
+                                xycoords='axes fraction', fontsize=9, color=label_color, alpha=0.75, **{'va': 'top'})
                 
                 # Tick formatting
                 # Strategy: place minor ticks at 1-degree intervals, but make sure upper and lower limits are integers
@@ -299,8 +308,9 @@ def planar_composite(data, model_names, intensity_bins, field, pressure_level, e
             extremum = max([abs(vmin), abs(vmax)])
             # Get the order of magnitude (oom) of the extremum, use the reciprocal to determine number of decimal points
             oom = np.ceil(np.log10(1/extremum))
+            print('Extremum: {0}, order of magnitude: {1}'.format(extremum, oom))
             if oom < 0: # for large values
-                fmt = '%.0f'
+                fmt = '%.1e'
             elif oom > 2: # for small values
                 fmt = '%.1e'.format(int(oom))
             else: # other
@@ -310,7 +320,11 @@ def planar_composite(data, model_names, intensity_bins, field, pressure_level, e
             cw.set_axis_off()
             cax = cw.inset_axes([0, 0, 1, 1])
             colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norms[intensity_bin][experiment], cmaps[intensity_bin][experiment]), 
-                                    orientation='horizontal', cax=cax, format=matplotlib.ticker.FormatStrFormatter(fmt))
+                                    orientation='horizontal', cax=cax, format=matplotlib.ticker.ScalarFormatter())
+            # Colorbar tick scientific notation formatting (see the ScalarFormatterForceFormat() class)
+            fmt = ScalarFormatterForceFormat()
+            fmt.set_powerlimits((-2, 3))
+            cax.xaxis.set_major_formatter(fmt)
             # Modify font size of ticklabels
             cax.tick_params(labelsize=8)
             # Hide every other ticklabel
@@ -450,9 +464,9 @@ def azimuthal_composite(data, model_names, intensity_bins, field, experiment_plo
     #       number of columns is dictated by number of intensity bins TIMES the number of experiments desired to be plotted.
     nrows, ncols = len(model_names) + 1, len(experiment_plots)*len(intensity_bins)
     # Define height ratios as a function of the number of models
-    height_ratios = [1 if row != nrows-1 else 0.1 for row in range(0, nrows)]
+    height_ratios = [1 if row != nrows-1 else 0.075 for row in range(0, nrows)]
     # Initialize figure and grid. Note that nrows-1 is used to ignore the colorbar height.
-    fig, grid = [plt.figure(figsize=(2.5*ncols, 2.5*(nrows-1)), constrained_layout=True), 
+    fig, grid = [plt.figure(figsize=(2*ncols, 2*(nrows-1)), constrained_layout=True), 
                  matplotlib.gridspec.GridSpec(nrows=nrows, ncols=ncols, height_ratios=height_ratios)]
     
     # Iterate over intensity bins (columns)
@@ -497,8 +511,15 @@ def azimuthal_composite(data, model_names, intensity_bins, field, experiment_plo
                     
                 # Subplot labeling - only label first rows
                 if model_index == 0:
-                    ax.annotate('({0})'.format(chr(ord('a') + intensity_bin_index + experiment_index)), (0.05, 0.95), xycoords='axes fraction', 
-                                fontsize=10, color='k', alpha=0.75, **{'va': 'top'})
+                    ax.annotate('({0})'.format(chr(ord('a') + intensity_bin_index + experiment_index)), (0.97, 0.95), xycoords='axes fraction', 
+                                fontsize=10, color='k', alpha=0.75, **{'ha': 'right', 'va': 'top'})
+                    
+                # Tick formatting
+                # Strategy: place minor ticks at 1-degree intervals, but make sure upper and lower limits are integers
+                dx = 1
+                x_min, x_max = composites[intensity_bin][model_name][experiment_plot].radius.min(), composites[intensity_bin][model_name][experiment_plot].radius.max()
+                gridline_x_minor = np.arange(np.floor(x_min), np.floor(x_max), 1)
+                ax.xaxis.set_minor_locator(matplotlib.ticker.FixedLocator(gridline_x_minor))
                     
                 # Labeling: column operations for intensity bin
                 if (intensity_bin_index + experiment_index) == 0:
@@ -545,7 +566,11 @@ def azimuthal_composite(data, model_names, intensity_bins, field, experiment_plo
                 cw.set_axis_off()
                 cax = cw.inset_axes([0, 0, 1, 1])
                 colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norms[intensity_bin][experiment], cmaps[intensity_bin][experiment]), 
-                                        orientation='horizontal', cax=cax, format=matplotlib.ticker.FormatStrFormatter(fmt))
+                                        orientation='horizontal', cax=cax, format=matplotlib.ticker.ScalarFormatter())
+                # Colorbar tick scientific notation formatting (see the ScalarFormatterForceFormat() class)
+                fmt = ScalarFormatterForceFormat()
+                fmt.set_powerlimits((-2, 3))
+                cax.xaxis.set_major_formatter(fmt)
                 # Modify font size of ticklabels
                 cax.tick_params(labelsize=8)
                 # Hide every other ticklabel
@@ -553,7 +578,11 @@ def azimuthal_composite(data, model_names, intensity_bins, field, experiment_plo
                 # Create colorbar label
                 long_name, units = field_properties(field)
                 colorbar.set_label('[{1}]'.format(long_name, units), labelpad=10)
-            
+    
+    # Universal plot labels
+    fig.supxlabel('degrees from TC center', y=0.95, fontsize=10)
+    fig.supylabel('Pressure [hPa]', x=1, rotation=270, fontsize=10)         
+    
     ''' Output statistics to obtain sample sizes for each composite. '''
     # Iterate over the models provided in the dictionary
     for model in model_names:
@@ -562,6 +591,130 @@ def azimuthal_composite(data, model_names, intensity_bins, field, experiment_plo
             [print('Number of records used for the composite for {0}, {1}, {2}: {3}'.format(model, experiment, intensity_bin, 
                                                                                             data[model][experiment]['composite_records'][intensity_bin])) for intensity_bin in intensity_bins]
 
+def azimuthal_composite_1d(data, model_names, intensity_bin, field):
+    """
+    Method to obtain azimuthal composite for prescribed data for a given field.
+    Note: input must be in the form of a 3-tiered dictionary that is the output of tc_analyis.tc_model_data().
+
+    Args:
+        data (dict): 3-tiered dictionary
+        model_names (list of str): list of strs with model names
+        intensity_bin (str): string listing the intensity bin of interest
+        field (str): name of field to evaluate
+        experiment_plots (list of str): experiments to plot (typically control, swishe, or swishe-control)
+    """
+    
+    # Define control and experiment names (assume both are in the density dictionary)
+    run_control, run_experiment = ['control', 'swishe']
+    # Determine which experiments to evaluate
+    experiments = [run_control, run_experiment]
+    # Artificial factor for precipitation and evaporation
+    factor = 3600 if field in ['precip', 'evap'] else 1
+    
+    ''' Generate composites. '''
+    # Iterate over the models provided in the dictionary
+    for model in model_names:
+        # Iterate over the experiments provided in the dictionary
+        for experiment in data[model].keys():
+            # Create subdictionaries for prescribed intensity bin
+            data[model][experiment]['composite'] = {intensity_bin: None}
+            # Pull composite and store
+            print(model, intensity_bin, field)
+            key, N, composite_mean = composite.azimuthal_compositor(model, data[model][experiment]['data'], intensity_bin, field)
+            # Populate the dictionary for the given intensity bin
+            data[model][experiment]['composite'][intensity_bin] = factor*composite_mean
+    
+    # Collect composites. Note: the differences will be calculated after this loop series. 
+    # Note: composite dictionary is structured top-down as: (1) intensity bin, (2) model, (3) experiment
+    composites = {}
+    # Pass 1: Iterate through experiments to get each experiment's density data.
+    # Initialize subdictionary for intensity bin
+    composites[intensity_bin] = {}
+    # Iterate over all models
+    for model in model_names:
+        # Initialize subdictionary for the iterand model
+        composites[intensity_bin][model] = {}
+        # Iterate over each given experiment
+        for experiment in data[model].keys():
+            composites[intensity_bin][model][experiment] = data[model][experiment]['composite'][intensity_bin]
+            
+    ''' Get normalizations and colormaps. '''
+    # Initialize normalization and colormaps. Normalizations will be model-specific to compare experimental runs.
+    norms = {intensity_bin: {}}
+    # Iterate over intensity bins to populate norms. Perform this over all prescribed experiments per intensity bin.
+    for model in composites[intensity_bin].keys():
+        ''' Normalization #1: raw data. '''
+        # Initialize minimum and maximum values
+        vmin, vmax = np.nan, np.nan
+        # Iterate over each experiment
+        for experiment_plot in [run_control, run_experiment]:
+            # Find extrema for this experiment
+            vmin_, vmax_ = [min([np.nanmin(sv) for k, v in composites[intensity_bin].items() for sk, sv in v.items() if sk in [run_control, run_experiment]]),
+                            max([np.nanmax(sv) for k, v in composites[intensity_bin].items() for sk, sv in v.items() if sk in [run_control, run_experiment]])]
+            # If the extrema are larger than their corresponding extrema, update
+            vmin, vmax = vmin_ if (vmin_ <= np.nanmin([vmin, vmin_])) else vmin, vmax_ if (vmax_ > np.nanmax([vmax, 0])) else vmax
+        # Subdivide normalization into sequential (all one sign) or diverging (two signs, including 0) bins
+        if vmin < 0 and vmax > 0:
+            # Get larger of the two bounds
+            extremum = max([abs(vmin), abs(vmax)])
+            norms[intensity_bin][run_control], norms[intensity_bin][run_experiment] = [matplotlib.colors.Normalize(vmin=-extremum, vmax=extremum),
+                                                                                       matplotlib.colors.Normalize(vmin=-extremum, vmax=extremum)]
+        else:
+            norms[intensity_bin][run_control], norms[intensity_bin][run_experiment] = [matplotlib.colors.Normalize(vmin=vmin, vmax=vmax),
+                                                                                       matplotlib.colors.Normalize(vmin=vmin, vmax=vmax)]
+    
+    ''' Begin plotting. '''
+    # Note: number of rows is dictated by number of models.
+    nrows, ncols = len(composites[intensity_bin].keys()), 1
+    # Initialize figure and grid.
+    fig, grid = [plt.figure(figsize=(2.5*ncols, 2*nrows), constrained_layout=True), matplotlib.gridspec.GridSpec(nrows=nrows, ncols=ncols)]
+    # Define colors for line plots
+    colors = ['b', 'r']
+    # Iterate over models (rows)
+    for model_index, model_name in enumerate(composites[intensity_bin].keys()):
+        # Initialize subplot
+        ax = fig.add_subplot(grid[model_index, 0])
+        # Subplot labeling with model name
+        ax.annotate(model_name, (0.96, 0.94), xycoords='axes fraction', 
+                    fontsize=10, color='k', **{'ha': 'right', 'va': 'top'})
+        # Go through each desired experiment plot
+        for experiment_index, experiment_plot in enumerate(experiments):
+            # Create horizontal line to denote 0
+            ax.axhline([0], lw=0.5, c='k')
+            # Smooth the data with a quadratic interpolation 
+            # Substep 1: create a basis vector with some multiple number of spaces relative to the input
+            interp_basis = np.linspace(composites[intensity_bin][model_name][experiment_plot].radius.min(),
+                                       composites[intensity_bin][model_name][experiment_plot].radius.max(),
+                                       8*len(composites[intensity_bin][model_name][experiment_plot].radius))
+            # Substep 2: perform the interpolation. Perform filter to ensure no subzero values occur due to smoothing.
+            interp_composite = composites[intensity_bin][model_name][experiment_plot].interp(radius=interp_basis, method='quadratic')
+            interp_composite = interp_composite.where(interp_composite >= 0, 0)
+            # Plot data. Ensure the label only gets printed for the first plot to avoid repetition.
+            label = experiment_plot if model_index == 0 else '_nolegend_'
+            im = ax.plot(interp_composite.radius, interp_composite, lw=3, color=colors[experiment_index], label=label)
+            # Modify y-axis to fit data maxima
+            ax.set_xlim([0, interp_composite.radius.max()*0.75])
+            ax.set_ylim([norms[intensity_bin][experiment_plot].vmin, 1.25*norms[intensity_bin][experiment_plot].vmax])
+                
+            # Tick formatting
+            # Strategy: place minor ticks at 1-degree intervals, but make sure upper and lower limits are integers
+            dx = 1
+            x_min, x_max = composites[intensity_bin][model_name][experiment_plot].radius.min(), composites[intensity_bin][model_name][experiment_plot].radius.max()
+            gridline_x_minor = np.arange(np.floor(x_min), np.floor(x_max), 1)
+            ax.xaxis.set_minor_locator(matplotlib.ticker.FixedLocator(gridline_x_minor))
+                
+            # Labeling: column operations for intensity bin
+            long_name, units = field_properties(field)
+            ax.set_ylabel('[{0}]'.format(units), fontsize=10, labelpad=10)
+            # Only plot the xlabel for the last row
+            if model_index == nrows-1:
+                ax.set_xlabel('degrees from TC center', fontsize=10, labelpad=10)
+            else:
+                ax.set_xticklabels([])
+            
+    fig.legend(frameon=False, ncols=2, prop={'size': 9}, bbox_to_anchor=(0.5, 0.925), loc='center')
+    
+    # Universal plot labels      
             
 def density_grid(data, model_names=['AM2.5', 'FLOR', 'HIRAM'], bin_resolution=5):
     """

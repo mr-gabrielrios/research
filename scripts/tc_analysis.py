@@ -140,7 +140,8 @@ def counts(mode='track_output', data=None):
             # Build an aggregate DataFrame based on data input mode
             if mode == 'model_output':
                 # Iterate through all track output data to obtain an aggregate DataFrame
-                aggregate = pd.concat([data[model][experiment][i]['track_output'] for i in range(0, len(data[model][experiment]))])
+                aggregate = pd.concat([data[model][experiment]['data'][i]['track_output'] for i in range(0, len(data[model][experiment]))])
+                print(aggregate['storm_id'].unique())
                 # Log how many individual TCs exist in this configuration
                 storm_count = len(aggregate['storm_id'].unique())
             elif mode == 'track_output':

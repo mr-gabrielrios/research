@@ -84,13 +84,18 @@ def time_adjust(model, timestamp, method='pandas_to_cftime'):
     Returns:
         out (multiple): Pandas, datetime, or cftime object.
     """
-    
+    # Convert formats.
+    # Note: converting from 'cftime' to 'datetime' results in an addition of 1900 for models not affected by 'year_adjust' years 
     if method == 'pandas_to_cftime':
+        # Define adjustment interval for select models
         year_adjust = 0 if model == 'FLOR' else 1900
         out = cftime.DatetimeNoLeap(year=timestamp.year-year_adjust, month=timestamp.month, day=timestamp.day, hour=timestamp.hour)
         return out
-    else:
-        return None
+    elif 'cftime_to_pandas':
+        # Define adjustment interval for select models
+        year_adjust = 1900 if model == 'FLOR' else 0
+        out = datetime.datetime(year=timestamp.year + 1900 - year_adjust, month=timestamp.month, day=timestamp.day, hour=timestamp.hour)
+        return pd.to_datetime(out)
     
 def get_constants(name):
     
@@ -185,7 +190,7 @@ def intensity_binning(mode='track_output', data=None, intensity_metric='max_wind
 
     # Define the intensity bins
     if intensity_metric == 'max_wind':
-        intensity_bin_limits = [0, 10, 20, 30, np.inf] 
+        intensity_bin_limits = [0, 15, 35, np.inf] 
     elif intensity_metric == 'min_slp':
         intensity_bin_limits = [np.inf, 1000, 970, 940, 0]
     # Create the bin data structure, with bin numbers as keys and bin bounds and data as subdictionaries
