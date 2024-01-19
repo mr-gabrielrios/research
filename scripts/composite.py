@@ -1,4 +1,5 @@
 import cftime, datetime
+import multiprocessing
 import numpy as np, pandas as pd, scipy as sp, xarray as xr
 import os, pickle, random
 
@@ -125,7 +126,77 @@ def planar_compositor(model, datasets, intensity_bin, field, pressure_level=None
     
     return key, data, composite_mean
 
-def azimuthal_compositor(model, datasets, intensity_bin, field):
+''' Azimuthal compositing support methods. '''
+# These methods enable the radial variation of azimuthal means to be parallelized. Speedups >4x, especially with larger numbers of storms.
+# Embarassingly parallel implementation support method
+def azimuthal_mean(data, storm_id, key):
+    print('---> Checkpoint 1 for {0}'.format(storm_id))
+    # Get new midpoints for trimmed data
+    center_x, center_y = len(data[storm_id][key].grid_xt) // 2, len(data[storm_id][key].grid_yt) // 2
+    # Create coordinates for a TC-centric coordinate system (TC_xt, TC_yt)
+    data[storm_id][key] = data[storm_id][key].assign_coords({'TC_xt': data[storm_id][key]['grid_xt'] - data[storm_id][key]['grid_xt'].isel(grid_xt=center_x),
+                                                                'TC_yt': data[storm_id][key]['grid_yt'] - data[storm_id][key]['grid_yt'].isel(grid_yt=center_y)})
+    # Calculate radial distance in the TC-centric coordinate system from the domain center (center_x, center_y)
+    X, Y = np.meshgrid(data[storm_id][key]['TC_xt'].values, data[storm_id][key]['TC_yt'].values) # radius substep 1: create meshgrid
+    data[storm_id][key]['radius'] = xr.DataArray(data=np.sqrt(X**2 + Y**2), dims=['grid_yt', 'grid_xt'])
+    # Initiate radius vector beginning from TC center to domain edge (this is selected using -1)
+    # Note: assume minimum domain dimension is 'grid_xt'
+    radius_vector = data[storm_id][key]['radius'].isel(grid_xt=slice(center_x, -1), grid_yt=center_y)
+    
+    # Begin the azimuthal mean sequence here.
+    # This sequence will essentially step out radially from the center by establishing rings of tolerance at half the grid resolution
+    # Create a tolerance of half the grid resolution
+    tolerance =  data[storm_id][key]['TC_xt'].diff(dim='grid_xt').values[0] / 2
+    
+    print('---> Checkpoint 2 for {0}'.format(storm_id))
+    # If data has a vertical dimension, process along the vertical axis
+    if 'pfull' in data[storm_id][key].dims:
+        # Initialize the output NumPy array
+        out = np.full(shape=(len(data[storm_id][key].pfull.values), len(radius_vector)), fill_value=np.nan)
+        # Iterate over each pressure level found in the data
+        for j, pressure_level in enumerate(data[storm_id][key].pfull.values):
+            # Iterate over all radii in radius_vector
+            for i, r in enumerate(radius_vector.values):
+                # Define the radial limits for the 'i' iterand
+                inner_radius, outer_radius = r - tolerance, r + tolerance
+                # Extract data from the radial ring at the given pressure level
+                temp = data[storm_id][key].isel(pfull=j).where((data[storm_id][key].isel(pfull=j)['radius'] >= inner_radius) & 
+                                                                (data[storm_id][key].isel(pfull=j)['radius'] < outer_radius)).values
+                # Filter out missing data and assign to the corresponding array location
+                # print('{0:.2f} to {1:.2f}: {2}'.format(inner_radius, outer_radius, temp))
+                out[j, i] = np.nanmean(temp[~np.isnan(temp)])
+        # Generate the output xArray DataArray
+        data[storm_id][key] = xr.DataArray(data=out, dims=['pfull', 'radius'], 
+                                coords={'pfull': (['pfull'], data[storm_id][key].pfull.values),
+                                'radius': (['radius'], radius_vector.values)})
+    
+    # Else, process on the single available level
+    else:
+        # Initialize the output NumPy array
+        out = np.full(shape=(len(radius_vector)), fill_value=np.nan)
+        # Iterate over all radii in radius_vector
+        for i, r in enumerate(radius_vector.values):
+            # Define the radial limits for the 'i' iterand
+            inner_radius, outer_radius = r - tolerance, r + tolerance
+            # Extract data from the radial ring at the given pressure level
+            temp = data[storm_id][key].where((data[storm_id][key]['radius'] >= inner_radius) & 
+                                                            (data[storm_id][key]['radius'] < outer_radius)).values
+            # Filter out missing data and assign to the corresponding array location
+            out[i] = np.nanmean(temp[~np.isnan(temp)])
+        # Generate the output xArray DataArray
+        data[storm_id][key] = xr.DataArray(data=out, dims=['radius'], coords={'radius': (['radius'], radius_vector.values)})
+
+    return storm_id, data[storm_id]
+# Embarassinglt parallel implementation method
+def pproc(data, key):
+    inputs = [(data, id_, key) for id_ in list(data.keys())]
+    with multiprocessing.get_context("spawn").Pool(16) as p:
+        results = [result for result in p.starmap(azimuthal_mean, inputs)]
+    for result in results:
+        data[result[0]] = result[1]
+    return data
+
+def azimuthal_compositor(model, datasets, intensity_bin, field, parallel = True):
     
     """
     Method to generate azimuthal composites for a list of given TCs for a field, 
@@ -230,59 +301,64 @@ def azimuthal_compositor(model, datasets, intensity_bin, field):
             
     # Now, all data should be trimmed to equal domain sizes.
     # Iterate over each storm and get radii
-    for storm_id in data.keys():
-        # Get new midpoints for trimmed data
-        center_x, center_y = len(data[storm_id][key].grid_xt) // 2, len(data[storm_id][key].grid_yt) // 2
-        # Create coordinates for a TC-centric coordinate system (TC_xt, TC_yt)
-        data[storm_id][key] = data[storm_id][key].assign_coords({'TC_xt': data[storm_id][key]['grid_xt'] - data[storm_id][key]['grid_xt'].isel(grid_xt=center_x),
-                                                                 'TC_yt': data[storm_id][key]['grid_yt'] - data[storm_id][key]['grid_yt'].isel(grid_yt=center_y)})
-        # Calculate radial distance in the TC-centric coordinate system from the domain center (center_x, center_y)
-        X, Y = np.meshgrid(data[storm_id][key]['TC_xt'].values, data[storm_id][key]['TC_yt'].values) # radius substep 1: create meshgrid
-        data[storm_id][key]['radius'] = xr.DataArray(data=np.sqrt(X**2 + Y**2), dims=['grid_yt', 'grid_xt'])
-        # Initiate radius vector beginning from TC center to domain edge (this is selected using -1)
-        # Note: assume minimum domain dimension is 'grid_xt'
-        radius_vector = data[storm_id][key]['radius'].isel(grid_xt=slice(center_x, -1), grid_yt=center_y)
-        
-        # Begin the azimuthal mean sequence here.
-        # This sequence will essentially step out radially from the center by establishing rings of tolerance at half the grid resolution
-        # Create a tolerance of half the grid resolution
-        tolerance =  data[storm_id][key]['TC_xt'].diff(dim='grid_xt').values[0] / 2
-        
-        # If data has a vertical dimension, process along the vertical axis
-        if 'pfull' in data[storm_id][key].dims:
-            # Initialize the output NumPy array
-            out = np.full(shape=(len(data[storm_id][key].pfull.values), len(radius_vector)), fill_value=np.nan)
-            # Iterate over each pressure level found in the data
-            for j, pressure_level in enumerate(data[storm_id][key].pfull.values):
+    if parallel:
+        # Use parallel implementation
+        data = pproc(data, key)
+        # Run serially
+    else:
+        for storm_id in data.keys():
+            # Get new midpoints for trimmed data
+            center_x, center_y = len(data[storm_id][key].grid_xt) // 2, len(data[storm_id][key].grid_yt) // 2
+            # Create coordinates for a TC-centric coordinate system (TC_xt, TC_yt)
+            data[storm_id][key] = data[storm_id][key].assign_coords({'TC_xt': data[storm_id][key]['grid_xt'] - data[storm_id][key]['grid_xt'].isel(grid_xt=center_x),
+                                                                    'TC_yt': data[storm_id][key]['grid_yt'] - data[storm_id][key]['grid_yt'].isel(grid_yt=center_y)})
+            # Calculate radial distance in the TC-centric coordinate system from the domain center (center_x, center_y)
+            X, Y = np.meshgrid(data[storm_id][key]['TC_xt'].values, data[storm_id][key]['TC_yt'].values) # radius substep 1: create meshgrid
+            data[storm_id][key]['radius'] = xr.DataArray(data=np.sqrt(X**2 + Y**2), dims=['grid_yt', 'grid_xt'])
+            # Initiate radius vector beginning from TC center to domain edge (this is selected using -1)
+            # Note: assume minimum domain dimension is 'grid_xt'
+            radius_vector = data[storm_id][key]['radius'].isel(grid_xt=slice(center_x, -1), grid_yt=center_y)
+            
+            # Begin the azimuthal mean sequence here.
+            # This sequence will essentially step out radially from the center by establishing rings of tolerance at half the grid resolution
+            # Create a tolerance of half the grid resolution
+            tolerance =  data[storm_id][key]['TC_xt'].diff(dim='grid_xt').values[0] / 2
+            
+            # If data has a vertical dimension, process along the vertical axis
+            if 'pfull' in data[storm_id][key].dims:
+                # Initialize the output NumPy array
+                out = np.full(shape=(len(data[storm_id][key].pfull.values), len(radius_vector)), fill_value=np.nan)
+                # Iterate over each pressure level found in the data
+                for j, pressure_level in enumerate(data[storm_id][key].pfull.values):
+                    # Iterate over all radii in radius_vector
+                    for i, r in enumerate(radius_vector.values):
+                        # Define the radial limits for the 'i' iterand
+                        inner_radius, outer_radius = r - tolerance, r + tolerance
+                        # Extract data from the radial ring at the given pressure level
+                        temp = data[storm_id][key].isel(pfull=j).where((data[storm_id][key].isel(pfull=j)['radius'] >= inner_radius) & 
+                                                                    (data[storm_id][key].isel(pfull=j)['radius'] < outer_radius)).values
+                        # Filter out missing data and assign to the corresponding array location
+                        # print('{0:.2f} to {1:.2f}: {2}'.format(inner_radius, outer_radius, temp))
+                        out[j, i] = np.nanmean(temp[~np.isnan(temp)])
+                # Generate the output xArray DataArray
+                data[storm_id][key] = xr.DataArray(data=out, dims=['pfull', 'radius'], 
+                                    coords={'pfull': (['pfull'], data[storm_id][key].pfull.values),
+                                    'radius': (['radius'], radius_vector.values)})
+            # Else, process on the single available level
+            else:
+                # Initialize the output NumPy array
+                out = np.full(shape=(len(radius_vector)), fill_value=np.nan)
                 # Iterate over all radii in radius_vector
                 for i, r in enumerate(radius_vector.values):
                     # Define the radial limits for the 'i' iterand
                     inner_radius, outer_radius = r - tolerance, r + tolerance
                     # Extract data from the radial ring at the given pressure level
-                    temp = data[storm_id][key].isel(pfull=j).where((data[storm_id][key].isel(pfull=j)['radius'] >= inner_radius) & 
-                                                                   (data[storm_id][key].isel(pfull=j)['radius'] < outer_radius)).values
+                    temp = data[storm_id][key].where((data[storm_id][key]['radius'] >= inner_radius) & 
+                                                                    (data[storm_id][key]['radius'] < outer_radius)).values
                     # Filter out missing data and assign to the corresponding array location
-                    # print('{0:.2f} to {1:.2f}: {2}'.format(inner_radius, outer_radius, temp))
-                    out[j, i] = np.nanmean(temp[~np.isnan(temp)])
-            # Generate the output xArray DataArray
-            data[storm_id][key] = xr.DataArray(data=out, dims=['pfull', 'radius'], 
-                                  coords={'pfull': (['pfull'], data[storm_id][key].pfull.values),
-                                  'radius': (['radius'], radius_vector.values)})
-        # Else, process on the single available level
-        else:
-            # Initialize the output NumPy array
-            out = np.full(shape=(len(radius_vector)), fill_value=np.nan)
-            # Iterate over all radii in radius_vector
-            for i, r in enumerate(radius_vector.values):
-                # Define the radial limits for the 'i' iterand
-                inner_radius, outer_radius = r - tolerance, r + tolerance
-                # Extract data from the radial ring at the given pressure level
-                temp = data[storm_id][key].where((data[storm_id][key]['radius'] >= inner_radius) & 
-                                                                (data[storm_id][key]['radius'] < outer_radius)).values
-                # Filter out missing data and assign to the corresponding array location
-                out[i] = np.nanmean(temp[~np.isnan(temp)])
-            # Generate the output xArray DataArray
-            data[storm_id][key] = xr.DataArray(data=out, dims=['radius'], coords={'radius': (['radius'], radius_vector.values)})
+                    out[i] = np.nanmean(temp[~np.isnan(temp)])
+                # Generate the output xArray DataArray
+                data[storm_id][key] = xr.DataArray(data=out, dims=['radius'], coords={'radius': (['radius'], radius_vector.values)})
     
     # Get sample dataset for axis building in the composite array.
     # Note: this assumes all radii are equal.
