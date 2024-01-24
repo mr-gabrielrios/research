@@ -64,11 +64,19 @@ def planar_compositor(model, datasets, intensity_bin, field, pressure_level=None
             # Methodology: extract all timestamps with matching intensity for the given storm and assign them a storm 'sub-ID', which preserves the storm ID but gives it a unique identifier.
             storm_subids = [] # create storage list for all storm sub-IDs to be generated
             ''' Populate dictionary with data. '''
-            # If one intensity bin is found in the dataset, limit to N strongest entries per storm by filtering the storm according to the matching timestamps.
-            num_timestamps = 5 if len(dataset.time.values) > 5 else len(dataset.time.values) # limit number of timestamp indices per storm to this number
-            timestamps = [utilities.time_adjust(model, t, method='cftime_to_pandas') for t in dataset.time.values if not ((t.month == 2) & (t.day == 29))] # Get Pandas-friendly timestamps for DataFrame indexing
-            timestamps = ds['track_output'].loc[ds['track_output']['time'].isin(timestamps)].sort_values('max_wind', ascending=False).iloc[0:num_timestamps]['time'] # Get N strongest timestamps
-            timestamps = [utilities.time_adjust(model, t, method='pandas_to_cftime') for t in timestamps] # Revert to cftime for DataArray indexing
+            # Methodology:  (1) get matching timestamps between GCM output and TC tracker output. 
+            #               (2) then, get the timestamp corresponding to LMI from the TC tracker output.
+            #               (3) finally, get timestamps from +/- N days from the LMI timestamp, where N is defined in the script as 'n_days'
+            n_days = 0
+            # Get Pandas-friendly timestamps for DataFrame indexing
+            timestamps = [utilities.time_adjust(model, t, method='cftime_to_pandas') 
+                          for t in dataset.time.values if not ((t.month == 2) & (t.day == 29))] 
+            # Get strongest timestamp
+            timestamp_lmi = ds['track_output'].loc[ds['track_output']['time'].isin(timestamps)].sort_values('max_wind', ascending=False).iloc[0]['time'] 
+            # Get the timestamps found from +/- n_days and revert to cftime for DataArray indexing
+            timestamps = [utilities.time_adjust(model, t, method='pandas_to_cftime') for t in timestamps 
+                          if abs(t - timestamp_lmi) <= pd.Timedelta(n_days, "d")]
+            
             # Process data for each filtered timestamp
             for i, timestamp in enumerate(timestamps):   
                 # Assign the storm sub-ID
@@ -159,19 +167,38 @@ def azimuthal_mean(data, storm_id, field):
     visuals = {}
     
     # 1. Create radial field relative to storm center.
+    if 'TC_xt' not in dataset.coords or 'TC_yt' not in dataset.coords:
+        # Get new midpoints for trimmed data 
+        center_x, center_y = len(dataset.grid_xt) // 2, len(dataset.grid_yt) // 2
+        # Create coordinates for a TC-centric coordinate system (TC_xt, TC_yt)
+        dataset = dataset.assign_coords({'TC_xt': dataset['grid_xt'] - dataset['grid_xt'].isel(grid_xt=center_x),
+                                         'TC_yt': dataset['grid_yt'] - dataset['grid_yt'].isel(grid_yt=center_y)})
+        
     X, Y = np.meshgrid(dataset['TC_xt'], dataset['TC_yt'])
     dataset['radius'] = xr.DataArray(data=np.sqrt(X**2 + Y**2), dims=('grid_yt', 'grid_xt'))
     # 2. Define grid resolution from coarser of the two domain dimensions ('TC_xt' or 'TC_yt')
     # Note: because the spatial extent is square, the dimension with fewer elements is coarser by definition
     limiting_dimension = 'TC_xt' if len(dataset['TC_xt']) < len(dataset['TC_yt']) else 'TC_yt'
-    resolution = 1.5*np.diff(dataset[limiting_dimension])[0] # assume all elements are equal
+    resolution = abs(1.5*np.diff(dataset[limiting_dimension])[0]) # assume all elements are equal
     # 3. Create the first annulus inner radius and the radial limit
     r_i = 0
-    r_limit = dataset[limiting_dimension].max()
+    r_limit = dataset[limiting_dimension].max().item()
     # 4. Create a basis vector over the radius to guide the annular expansion
-    rs = np.arange(r_i, r_limit + resolution, resolution)
+    rs = np.arange(r_i, r_limit + resolution, resolution, dtype=float)
+    # print('Storm ID: {0}, limiting dimension: {1}, radial limit: {2}, radius vector: {3}, resolution: {4}'.format(storm_id, limiting_dimension, 
+    #                                                                                                               r_limit, rs, resolution))
     # 5. Create output array (conditional on pressure levels being present)
-    out = np.full(shape=(len(dataset.pfull.values), len(rs)-1), fill_value=np.nan) if 'pfull' in dataset.dims else np.full(shape=(len(rs)-1), fill_value=np.nan) 
+    try:
+        out = np.full(shape=(len(dataset.pfull.values), len(rs)-1), fill_value=np.nan) if 'pfull' in dataset.dims else np.full(shape=(len(rs)-1), fill_value=np.nan) 
+    except:
+        print('----------------------------------------------------------------')
+        print(storm_id)
+        print('radius stuff:', r_i, r_limit)
+        print('rs:', rs)
+        print('TC_xt:', dataset.TC_xt.values)
+        print('TC_yt:', dataset.TC_yt.values)
+        print('----------------------------------------------------------------')
+    dimensions = '2D' if len(out.shape) == 2 else '1D' # define dimensions of output array
     # 6. Create the annulus using a loop based on the limiting dimension and resolution
     # Note: use a basis vector from the center (0) to the domain edge
     # Note: begin from index 1 to establish the outer annular radius
@@ -181,7 +208,10 @@ def azimuthal_mean(data, storm_id, field):
 
         # 7. Average over annular area.
         average = dataset.where((dataset['radius'] >= r_i) & (dataset['radius'] < r_o)).mean(dim='grid_xt').mean(dim='grid_yt')
-        out[:, index] = average.sortby('pfull', ascending=True)
+        if dimensions == '2D':
+            out[:, index] = average.sortby('pfull', ascending=True)
+        else:
+            out[index] = average
         # Append this output to a storage list for easy debugging, if needed.
         if 'pfull' in dataset.dims: 
             visuals['Annulus #{0}:\ninner rad. = {1:.2f}, out. rad. = {2:.2f}'.format(index, r_i, r_o)] = \
@@ -193,9 +223,12 @@ def azimuthal_mean(data, storm_id, field):
         # 8. Expand annulus by a grid cell and repeat steps 6-8 until domain edge is reached.
         r_i += resolution
     # Populate the Dataset with the composite output
-    data[storm_id][field] = xr.DataArray(data=out, dims=('pfull', 'radius'), coords={'pfull': (['pfull'], dataset.pfull.values), 
-                                                                                    'radius': (['radius'], rs[:-1])},
-                                        attrs=dataset.attrs).sortby('pfull', ascending=True)
+    if dimensions == '2D':
+        data[storm_id][field] = xr.DataArray(data=out, dims=('pfull', 'radius'), coords={'pfull': (['pfull'], dataset.pfull.values), 
+                                                                                        'radius': (['radius'], rs[:-1])}, attrs=dataset.attrs)
+        data[storm_id][field] = data[storm_id][field].sortby('pfull', ascending=True)
+    else:
+        data[storm_id][field] = xr.DataArray(data=out, dims=('radius'), coords={'radius': (['radius'], rs[:-1])}, attrs=dataset.attrs)
 
     return storm_id, data[storm_id]
 
@@ -287,7 +320,7 @@ def azimuthal_compositor(model, datasets, intensity_bin, field, parallel = True)
             # Methodology:  (1) get matching timestamps between GCM output and TC tracker output. 
             #               (2) then, get the timestamp corresponding to LMI from the TC tracker output.
             #               (3) finally, get timestamps from +/- N days from the LMI timestamp, where N is defined in the script as 'n_days'
-            n_days = 1
+            n_days = 0
             # Get Pandas-friendly timestamps for DataFrame indexing
             timestamps = [utilities.time_adjust(model, t, method='cftime_to_pandas') 
                           for t in dataset.time.values if not ((t.month == 2) & (t.day == 29))] 
@@ -337,12 +370,17 @@ def azimuthal_compositor(model, datasets, intensity_bin, field, parallel = True)
             
     # Apply a parallel implementation to perform the azimuthal composite
     data = pproc(data, key)
-    
+    # Get dimensions of output array
+    dimensions = '2D' if len([v[key].shape for v in data.values()][0]) == 2 else '1D'
+    print(dimensions)
     # Iterate through all datasets and obtain the limiting dimensions (height == pfull, width == radius)
-    min_height, min_width = min([v[key].shape[0] for v in data.values()]), min([v[key].shape[1] for v in data.values()])
+    if dimensions == '2D':
+        min_height, min_width = min([v[key].shape[0] for v in data.values()]), min([v[key].shape[1] for v in data.values()])
+    else:
+        min_width = min([v[key].shape[0] for v in data.values()])
     # Trim each dataset to the limiting dimension
     for k in data.keys():
-        data[k] = {key: data[k][key][0:min_height, 0:min_width].sortby('pfull', ascending=True)}
+        data[k] = {key: data[k][key][0:min_height, 0:min_width].sortby('pfull', ascending=True) if dimensions == '2D' else data[k][key][0:min_width]}
     # Get sample dataset for axis building in the composite array.
     sample_dataset = [v[key] for v in data.values()][0]
     

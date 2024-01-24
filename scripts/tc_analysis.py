@@ -5,7 +5,7 @@ import os, pickle, random
 
 import composite, utilities
 
-def tc_model_data(models, experiments, num_storms=-1):
+def tc_model_data(models, experiments, storm_type, num_storms=-1):
     
     """
     Method to load data into a 3-tiered dictionary:
@@ -14,6 +14,7 @@ def tc_model_data(models, experiments, num_storms=-1):
     Args:
         models (list): list of strings with model names
         experiments (list): list of strings with model names
+        storm_type (str): type of storm (TS = tropical storm or C15w = hurricane-strength storm)
         num_storms (int): number of storms to process. -1 is default and processes all storms found.
     Returns:
         data (dict): 3-tiered dictionary.
@@ -31,20 +32,22 @@ def tc_model_data(models, experiments, num_storms=-1):
         for experiment in experiments:
             # Pull storm IDs from matching file names, with storm ID of the format {YEAR}-{NUMBER}
             # Assume filename is of form: TC-{MODEL}-{EXPERIMENT}-{CATEGORY}-{YEAR}-{NUMBER}-max_wind-{MAX_WIND}-min_slp-{MIN_SLP}.pkl
-            storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] for f in os.listdir(dirname)
-                        if (model in f) and (experiment in f)]
+            # If the storm_type is TS, limit storm LMI winds to 30 m s^-1
+            if storm_type == 'TS':
+                storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] for f in os.listdir(dirname)
+                            if (model in f) and (experiment in f) and (storm_type in f) and (int(f.split('-')[7]) < 30)]
+            else:
+                storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] for f in os.listdir(dirname)
+                            if (model in f) and (experiment in f) and (storm_type in f)]
             # and randomly select 'num_storms' number of storms
-            storm_ids = random.sample(storm_ids, num_storms) if num_storms <= len(storm_ids) else storm_ids
-            print('\t Storms to be processed: {0}'.format(storm_ids))
+            storm_id_subset = random.sample(storm_ids, num_storms) if num_storms <= len(storm_ids) and num_storms != -1 else storm_ids
+            print('\t Storms to be processed: {0}'.format(storm_id_subset))
             # Initialize a storage list for the storms 
             data[model][experiment] = {'data': []}
             # Iterate over all storms found
-            for storm_id in storm_ids:
+            for storm_id in storm_id_subset:
                 # Access the processed data
-                storm_filename, storm = utilities.access(model, experiment, storm_type='C15w', storm_id=storm_id, processed=True)
-                # Obtain the radial and tangential wind components
-                # Note: I don't like having two methods lumped into one (in this case, loading and obtaining wind components),
-                #       but it's the easiest way to obtain radius-dependent data
+                storm_filename, storm = utilities.access(model, experiment, storm_type=storm_type, storm_id=storm_id, processed=True)
                 print('\t \t Processing {0} from {1}'.format(storm_id, storm_filename))
                 # Append to storage list
                 data[model][experiment]['data'].append(storm)
@@ -92,6 +95,7 @@ def tc_track_data(models, experiments, storm_type='C15w', snapshot_type='lmi', y
             storms = []
             # Iterate over individual TCs to extract data for the unique key
             for storm_id in storm_ids:
+                print('\t Working on {0}...'.format(storm_id))
                 # Select data for the iterand storm ID
                 storm = data[model][experiment]['raw'].loc[data[model][experiment]['raw']['storm_id'] == storm_id]
                 # Get snapshot of TC based on argument

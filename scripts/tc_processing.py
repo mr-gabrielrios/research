@@ -23,6 +23,10 @@ def derived_fields(model_name, data):
     data = derived.thflx(data)
     # Add relative humidity
     data = derived.rh(data)
+    # Add domainwise temperature anomaly
+    data = derived.domainwise_anomaly(data, 'temp')
+    # Add domainwise specific humidity anomaly
+    data = derived.domainwise_anomaly(data, 'sphum')
     # Add moist static energy
     data = derived.mse(data)
     # Add radial and tangential velocity components
@@ -83,23 +87,39 @@ def main(model, experiment, storm_type, storm_id=None):
     # Process data and obtain derived fields
     data = derived_fields(model, data)
     # Store processed data
-    storage(data, filename=filename, override=True)
+    storage(data, filename=filename, override=False)
     
     return data
     
 if __name__ == '__main__':
     # Define loading parameters
-    models, experiments, storm_type = ['FLOR', 'HIRAM'], ['control', 'swishe'], 'C15w'
+    models, experiments, storm_type = ['AM2.5'], ['swishe'], 'TS'
     # Single storm load    
     storm_ids = ['2052-0034']
     # Multi-storm load
-    num_storms = 50 # enter -1 to get all
+    num_storms = 100 # enter -1 to get all
     # Load storms
     for model in models:
         for experiment in experiments:
-            storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] 
-                        for f in os.listdir('/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs')
-                        if (model in f) and (experiment in f)]
-            storm_ids = random.sample(storm_ids, num_storms) if num_storms < len(storm_ids) else storm_ids
-            for storm_id in storm_ids:
-                data = main(model, experiment, storm_type, storm_id=storm_id)
+            data_dirname, processed_dirname = ['/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs', 
+                                               '/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs/processed']
+            if storm_type == 'TS':
+                storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] for f in os.listdir(data_dirname)
+                            if (model in f) and (experiment in f) and (storm_type in f) and (int(f.split('-')[7]) <= 32)]
+            else:
+                storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] for f in os.listdir(data_dirname)
+                            if (model in f) and (experiment in f) and (storm_type in f)]
+            
+            print('{0}, {1} - all storms: {2}'.format(model, experiment, sorted(storm_ids)))
+            
+            # Check if storm_ids are already processed. If so, remove from list
+            processed_storms = [f.split('-')[4] + '-' + f.split('-')[5] for f in os.listdir(processed_dirname)
+                                if (model in f) and (experiment in f)]
+            unprocessed_ids = list(set(storm_ids) - set(processed_storms))
+            print('{0}, {1} - storms to process: {2}'.format(model, experiment, sorted(unprocessed_ids)))  
+            # Get random shuffle of IDs
+            unprocessed_ids = random.sample(unprocessed_ids, num_storms) if num_storms < len(unprocessed_ids) and num_storms != -1 else unprocessed_ids
+            
+            for storm_id in unprocessed_ids:
+                if storm_id != ['2063-0002', '2072-0002']:
+                    data = main(model, experiment, storm_type, storm_id=storm_id)

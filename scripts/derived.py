@@ -278,6 +278,23 @@ def vertical_integral(data, field, bottom=950, top=100, benchmarking=False):
     
     return data
     
+def domainwise_anomaly(data, field):
+    """
+    Method to generate domainwise anomalies for a given field relative to its given pressure level.
+    For example, if 'temp' is chosen as a the given field, the temperature anomaly would be calculated layerwise over the domain.
+
+    Args:
+        data (xArray Dataset): xArray Dataset
+        field (str): field to integrate
+    Returns:
+        data (xArray Dataset): xArray Dataset
+    """
+    
+    # Create shorthand name for vertical data
+    data['tc_vertical_output']['{0}_anom'.format(field)] = data['tc_vertical_output'][field] - data['tc_vertical_output'][field].mean(dim='grid_xt').mean(dim='grid_yt')
+    
+    return data
+    
 def radial_tangential_velocities(data): 
     '''
     Calculate radial and tangential velocity components from zonal and meridional velocities.
@@ -288,35 +305,42 @@ def radial_tangential_velocities(data):
         data (dict): 3-item dictionary with track output, model output (planar), and vertical output (vertical)
     
     '''
-    
+
     # Pull vertical data from the dictionary
-    dataset = data['tc_vertical_output']
+    ds = data['tc_vertical_output']
     # Initialize output list that will store all processed data timestamps
     output = []
     # Iterate through each timestep
-    for t, timestamp in enumerate(dataset.time.values):
-        # Pull data at the iterand timestamp
-        snapshot = dataset.sel(time=timestamp).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
-        # Get domain center to support the setup of a TC-centered domain for this snapshot
-        center_x, center_y = len(snapshot['grid_xt']) // 2, len(snapshot['grid_yt']) // 2
+    for t, timestamp in enumerate(ds.time.values):
+        dataset = ds.sel(time=timestamp).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all') 
+        # Filter out mean steering winds
+        for field in ['ucomp', 'vcomp']:
+            dataset[field] = dataset[field] - dataset[field].sel(pfull=slice(200, 850)).mean(dim='grid_xt').mean(dim='grid_yt').mean(dim='pfull')
+        dataset['wind'] = np.sqrt(dataset['ucomp']**2 + dataset['vcomp']**2)
+        
+        # Get new midpoints for trimmed data 
+        center_x, center_y = len(dataset.grid_xt) // 2, len(dataset.grid_yt) // 2
         # Create coordinates for a TC-centric coordinate system (TC_xt, TC_yt)
-        snapshot = snapshot.assign_coords({'TC_xt': snapshot['grid_xt'] - snapshot['grid_xt'].isel(grid_xt=center_x),
-                                           'TC_yt': snapshot['grid_yt'] - snapshot['grid_yt'].isel(grid_yt=center_y)})
-        # Calculate radial distance in the TC-centric coordinate system from the domain center (center_x, center_y)
-        X, Y = np.meshgrid(snapshot['TC_xt'].values, snapshot['TC_yt'].values) # radius substep 1: create meshgrid
-        snapshot['radius'] = xr.DataArray(data=np.sqrt(X**2 + Y**2), dims=['grid_yt', 'grid_xt'])
-        # Calculate radial and tangential components
-        # Note: might need to convert TC_xt, TC_yt, and radius to absolute distances
-        snapshot['wind_radial'] = (snapshot['ucomp']*snapshot['TC_xt'] + snapshot['vcomp']*snapshot['TC_yt'])/snapshot['radius']
-        snapshot['wind_tangential'] = abs((snapshot['ucomp']*snapshot['TC_yt'] - snapshot['vcomp']*snapshot['TC_xt'])/snapshot['radius'])
-        # Replace any nans (typically at TC center where radius == 0) with 0
-        for field in ['wind_radial', 'wind_tangential']:
-            snapshot[field] = xr.where(snapshot[field].isnull(), 0, snapshot[field])
+        dataset = dataset.assign_coords({'TC_xt': dataset['grid_xt'] - dataset['grid_xt'].isel(grid_xt=center_x),
+                                            'TC_yt': dataset['grid_yt'] - dataset['grid_yt'].isel(grid_yt=center_y)})
+        
+        X, Y = np.meshgrid(abs(dataset['TC_xt']), abs(dataset['TC_yt']))
+        X_, Y_ = np.meshgrid(dataset['TC_xt'], dataset['TC_yt'])
+        theta = np.arctan(Y_/X_)
+        theta = np.where((X_ < 0) | (Y_ < 0), theta+np.pi, theta)
+        theta = np.where((X_ >= 0) & (Y_ < 0), theta+np.pi, theta)
+        ''' Derived fields. '''
+        dataset['wind_radial'] = dataset['ucomp']*np.cos(theta) + dataset['vcomp']*np.sin(theta) # radial component
+        dataset['wind_tangential'] = -dataset['ucomp']*np.sin(theta) + dataset['vcomp']*np.cos(theta) # tangential component
         # Add attributes
-        snapshot['wind_radial'].attrs = {'long_name': 'radial velocity', 'units': 'm s$^{-1}$'}
-        snapshot['wind_tangential'].attrs = {'long_name': 'tangential velocity', 'units': 'm s$^{-1}$'}
+        dataset['wind_radial'].attrs = {'long_name': 'radial velocity', 'units': 'm s$^{-1}$'}
+        dataset['wind_tangential'].attrs = {'long_name': 'tangential velocity', 'units': 'm s$^{-1}$'}
+        # Flip tangential winds if TC center in Southern Hemisphere
+        if data['track_output']['center_lat'].min() < 0:
+            dataset['wind_tangential'] = -dataset['wind_tangential']
         # Add to output list
-        output.append(snapshot)
+        output.append(dataset)
+            
     # Concatenate all snapshots and sort by time
     output = xr.concat(output, dim='time').sortby('time')
     # Pop the output data back into the input data dictionary
