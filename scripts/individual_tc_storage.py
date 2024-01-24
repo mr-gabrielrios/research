@@ -39,8 +39,6 @@ def retrieve_model_data(model, dirname, year_range, output_type='atmos_month', b
     # Note: benchmarking showed ~1.5 s for opening 4 files using 'open_mfdataset', and at least 10x longer using 'open_dataset' + 'xr.concat'
     data = xr.open_mfdataset(files)
     
-    print(files)
-    
     if benchmarking:
         print('\t Model data retrieval time: {0:.3f} s'.format(time.time() - start))
     
@@ -78,6 +76,9 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
     # Truncate number of storms if less than requested are found
     if len(storm_ids) < num_storms:
         num_storms = len(storm_ids)
+        
+    # Manual override for troubleshooting
+    storm_ids = ['2072-0002']
     
     storm_counter = 0
     # Access model data that are specific to each tracked TC.
@@ -219,6 +220,7 @@ def retrieve_model_TCs(dirname, year_range, storms, model_output=None, output_ty
             # Get storm track center to locate the tracker-driven TC center
             temp_center_lon, temp_center_lat = [storm.loc[storm['time'] == dt_timestamp]['center_lon'].values,
                                                 storm.loc[storm['time'] == dt_timestamp]['center_lat'].values]
+            print('TEMP | Center: {0}, {1}; extent: {2}'.format(temp_center_lat, temp_center_lon, extent))
             # Get temporary storm snapshot to locate the GCM output-driven TC center
             temp_snapshot = snapshot.sel(time=timestamp, 
                                         grid_xt=np.arange(temp_center_lon-extent, temp_center_lon+extent),
@@ -315,7 +317,7 @@ def vertical_profile_selection(storms, model, experiment):
                                                         grid_yt=slice(min(grid_yt_bounds), max(grid_yt_bounds))).load()
             except:
                 print('\t Unable to retrieve vertical data for {0}'.format(snapshot['storm_id']))
-                pass
+                continue
             # Assign storm-specific snapshot values
             storm_params = ['center_lon', 'center_lat', 'max_wind', 'min_slp', 'core_temp', 'speed', 'heading', 'storm_id']
             # Assign fields to output
@@ -328,6 +330,7 @@ def vertical_profile_selection(storms, model, experiment):
         output = [out.isel(time=0) if 'time' in out.dims else out for out in output]
         # Concatenate all timestamps and ensure each output only has one time index. 
         container[storm_id] = xr.concat(output, dim='time')
+        print(container[storm_id])
     return container
 
 def main(model, experiments, storm_type, year_range, num_storms, storage=False, override=False):
@@ -391,7 +394,8 @@ def main(model, experiments, storm_type, year_range, num_storms, storage=False, 
 if __name__ == '__main__':
     start = time.time()
     # Use range(start, stop) for a range of years between 'start' and 'stop', and a list [start, stop] for specific years.
-    year_range = range(2050, 2100)
-    data = main('FLOR', experiments=['swishe'], storm_type='C15w', year_range=year_range, 
-                num_storms=50, storage=True, override=True)
-    print('Elapsed total runtime: {0:.3f}s'.format(time.time() - start))
+    year_range = range(172, 173)
+    for model in ['AM2.5']:
+        data = main(model, experiments=['swishe'], storm_type='TS', year_range=year_range, 
+                    num_storms=5, storage=True, override=True)
+        print('Elapsed total runtime: {0:.3f}s'.format(time.time() - start))
