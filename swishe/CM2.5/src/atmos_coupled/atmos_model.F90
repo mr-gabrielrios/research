@@ -93,6 +93,7 @@ public ice_atm_bnd_type_chksum
      real, pointer, dimension(:,:) :: rh700    => null() ! 700 hPa relhum 
      real, pointer, dimension(:,:) :: rh850    => null() ! 850 hPa relhum 
      real, pointer, dimension(:,:) :: p_surf   => null() ! surface pressure 
+     real, pointer, dimension(:,:) :: swfq     => null() ! SWISHE frequency grid 
      real, pointer, dimension(:,:) :: slp      => null() ! sea level pressure 
      real, pointer, dimension(:,:) :: gust     => null() ! gustiness factor
      real, pointer, dimension(:,:) :: coszen   => null() ! cosine of the zenith angle
@@ -322,7 +323,7 @@ type (atmos_data_type), intent(inout) :: Atmos
 
     call atmosphere_up (Atmos%Time,  Surface_boundary%land_frac, Atmos%Surf_diff, &
                         Atmos%lprec, Atmos%fprec, Atmos%gust, Atmos%vort850, &
-                        Atmos%rh250, Atmos%rh500, Atmos%rh700, Atmos%rh850, & 
+                        Atmos%rh250, Atmos%rh500, Atmos%rh700, Atmos%rh850, Atmos%swfq, & 
                         Surface_boundary%u_star, Surface_boundary%b_star, Surface_boundary%q_star)
 
 !   --- advance time ---
@@ -455,6 +456,7 @@ type (time_type), intent(in) :: Time_init, Time, Time_step
                Atmos % rh500    (nlon,nlat), &
                Atmos % rh700    (nlon,nlat), &
                Atmos % rh850    (nlon,nlat), &
+               Atmos % swfq     (nlon,nlat), &
                Atmos % p_surf   (nlon,nlat), &
                Atmos % slp      (nlon,nlat), &
                Atmos % gust     (nlon,nlat), &
@@ -678,6 +680,7 @@ type (atmos_data_type), intent(inout) :: Atmos
                Atmos % rh500     , &
                Atmos % rh700     , &
                Atmos % rh850     , &
+               Atmos % swfq     , &
                Atmos % p_surf   , &
                Atmos % slp      , &
                Atmos % gust     , &
@@ -841,10 +844,11 @@ type(atmos_data_type), intent(in) :: atm
   write(outunit,100) ' atm%u_bot                  ', mpp_chksum(atm%u_bot                 )
   write(outunit,100) ' atm%v_bot                  ', mpp_chksum(atm%v_bot                 )
   write(outunit,100) ' atm%vort850                ', mpp_chksum(atm%vort850               )
-  write(outunit,100) ' atm%rh250                   ', mpp_chksum(atm%rh250                  )
-  write(outunit,100) ' atm%rh500                   ', mpp_chksum(atm%rh500                  )
-  write(outunit,100) ' atm%rh700                   ', mpp_chksum(atm%rh700                  )
-  write(outunit,100) ' atm%rh850                   ', mpp_chksum(atm%rh850                  )
+  write(outunit,100) ' atm%rh250                   ', mpp_chksum(atm%rh250                )
+  write(outunit,100) ' atm%rh500                   ', mpp_chksum(atm%rh500                )
+  write(outunit,100) ' atm%rh700                   ', mpp_chksum(atm%rh700                )
+  write(outunit,100) ' atm%rh850                   ', mpp_chksum(atm%rh850                )
+  write(outunit,100) ' atm%swfq                   ', mpp_chksum(atm%swfq                  )
   write(outunit,100) ' atm%p_surf                 ', mpp_chksum(atm%p_surf                )
   write(outunit,100) ' atm%slp                    ', mpp_chksum(atm%slp                   )
   write(outunit,100) ' atm%gust                   ', mpp_chksum(atm%gust                  )

@@ -364,7 +364,7 @@ subroutine surface_flux_1d (                                           &
      dhdt_surf, dedt_surf,  dedq_surf,  drdt_surf,                     &
      dhdt_atm,  dedq_atm,   dtaudu_atm, dtaudv_atm,                    &
      dt,        land,      seawater,     avail,     vort850, lat_bnd,  &
-     rh250, rh500, rh700, rh850)
+     rh250, rh500, rh700, rh850, swfq)
 !</PUBLICROUTINE>
 !  slm Mar 28 2002 -- remove agument drag_q since it is just cd_q*wind
 ! ============================================================================
@@ -382,7 +382,7 @@ subroutine surface_flux_1d (                                           &
        dhdt_atm,  dedq_atm,   dtaudu_atm,dtaudv_atm,         &
        w_atm,     u_star,     b_star,    q_star,             &
        cd_m,      cd_t,       cd_q
-  real, intent(inout), dimension(:) :: q_surf
+  real, intent(inout), dimension(:) :: q_surf, swfq
   real, intent(in) :: dt
 
   ! ---- local constants -----------------------------------------------------
@@ -521,6 +521,9 @@ subroutine surface_flux_1d (                                           &
       es_thresh(i)    = rh500_weighted(i) + rh700_weighted(i) &
                         + rh850_weighted(i) + vort850_weighted(i) 
   enddo
+
+  swfq = merge(1.0, 0.0, & (seawater) .and. (avail) .and. (w_atm > w0_cddt) &
+                     .and. (t_surf0 - 273.15 - sst_cddt > 0) .and. (es_thresh .ge. 2.5))
 
   where (avail)
     ! scale momentum drag coefficient on orographic roughness
@@ -665,7 +668,7 @@ subroutine surface_flux_0d (                                                 &
      dhdt_surf_0, dedt_surf_0,  dedq_surf_0,  drdt_surf_0,                   &
      dhdt_atm_0,  dedq_atm_0,   dtaudu_atm_0, dtaudv_atm_0,                  &
      dt,          land_0,       seawater_0,  avail_0, vort850_0, lat_bnd_0,  &
-     rh250_0, rh500_0, rh700_0, rh850_0)
+     rh250_0, rh500_0, rh700_0, rh850_0, swfq_0)
 
   ! ---- arguments -----------------------------------------------------------
   logical, intent(in) :: land_0,  seawater_0, avail_0
@@ -681,7 +684,7 @@ subroutine surface_flux_0d (                                                 &
        dhdt_atm_0,  dedq_atm_0,   dtaudu_atm_0,dtaudv_atm_0,           &
        w_atm_0,     u_star_0,     b_star_0,    q_star_0,               &
        cd_m_0,      cd_t_0,       cd_q_0
-  real, intent(inout) :: q_surf_0
+  real, intent(inout) :: q_surf_0, swfq_0
   real, intent(in)    :: dt
 
   ! ---- local vars ----------------------------------------------------------
@@ -691,7 +694,7 @@ subroutine surface_flux_0d (                                                 &
        p_atm,     z_atm,      t_ca,                          &
        p_surf,    t_surf,     u_surf,    v_surf,             &
        rough_mom, rough_heat, rough_moist,  rough_scale,     & 
-       gust, vort850, lat_bnd, rh250, rh500, rh700, rh850
+       gust, vort850, lat_bnd, rh250, rh500, rh700, rh850, swfq
   real, dimension(1) :: &
        flux_t,    flux_q,     flux_r,    flux_u,  flux_v,    &
        dhdt_surf, dedt_surf,  dedq_surf, drdt_surf,          &
@@ -729,6 +732,7 @@ subroutine surface_flux_0d (                                                 &
   rh500(1)     = rh500_0
   rh700(1)     = rh700_0
   rh850(1)     = rh850_0
+  swfq(1)      = swfq_0
 
   call surface_flux_1d (                                                 &
        t_atm,     q_atm,      u_atm,     v_atm,     p_atm,     z_atm,    &
@@ -741,7 +745,7 @@ subroutine surface_flux_0d (                                                 &
        dhdt_surf, dedt_surf,  dedq_surf,  drdt_surf,                     &
        dhdt_atm,  dedq_atm,   dtaudu_atm, dtaudv_atm,                    &
        dt,        land,      seawater, avail, vort850, lat_bnd,          &
-       rh250, rh500, rh700, rh850)
+       rh250, rh500, rh700, rh850, swfq)
 
   flux_t_0     = flux_t(1)
   flux_q_0     = flux_q(1)
@@ -778,7 +782,7 @@ subroutine surface_flux_2d (                                           &
      dhdt_surf, dedt_surf,  dedq_surf,  drdt_surf,                     &
      dhdt_atm,  dedq_atm,   dtaudu_atm, dtaudv_atm,                    &
      dt,        land,       seawater,  avail, vort850, lat_bnd, &
-     rh250, rh500, rh700, rh850)
+     rh250, rh500, rh700, rh850, swfq)
 
   ! ---- arguments -----------------------------------------------------------
   logical, intent(in), dimension(:,:) :: land,  seawater, avail
@@ -794,7 +798,7 @@ subroutine surface_flux_2d (                                           &
        dhdt_atm,  dedq_atm,   dtaudu_atm,dtaudv_atm,         &
        w_atm,     u_star,     b_star,    q_star,             &
        cd_m,      cd_t,       cd_q
-  real, intent(inout), dimension(:,:) :: q_surf
+  real, intent(inout), dimension(:,:) :: q_surf, swfq
   real, intent(in) :: dt
 
   ! ---- local vars -----------------------------------------------------------
@@ -812,7 +816,7 @@ subroutine surface_flux_2d (                                           &
           dhdt_surf(:,j), dedt_surf(:,j),  dedq_surf(:,j),  drdt_surf(:,j),                               &
           dhdt_atm(:,j),  dedq_atm(:,j),   dtaudu_atm(:,j), dtaudv_atm(:,j),                              &
           dt,             land(:,j),       seawater(:,j),  avail(:,j), vort850(:,j), lat_bnd(:,j),        &
-          rh250(:, j), rh500(:,j), rh700(:, j), rh850(:, j) )
+          rh250(:, j), rh500(:,j), rh700(:, j), rh850(:, j), swfq(:, j) )
   end do
 end subroutine surface_flux_2d
 

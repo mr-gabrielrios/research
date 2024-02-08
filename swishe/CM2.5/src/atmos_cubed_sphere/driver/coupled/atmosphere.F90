@@ -567,13 +567,14 @@ contains
 
 
  subroutine atmosphere_up ( Time,  frac_land, Surf_diff, lprec, fprec, gust, &
-                            vort850, rh250, rh500, rh700, rh850, &
+                            vort850, rh250, rh500, rh700, rh850, swfq, &
                             u_star, b_star, q_star )
 
    type(time_type),intent(in)         :: Time
    type(surf_diff_type), intent(inout):: Surf_diff
    real, intent(in),  dimension(:,:)  :: frac_land
    real, intent(inout), dimension(:,:):: gust, vort850, rh250, rh500, rh700, rh850
+   real, intent(inout), dimension(:,:):: swfq
    real, intent(out), dimension(:,:)  :: lprec,   fprec
    real, intent(in), dimension(:,:)   :: u_star, b_star, q_star
 
@@ -640,7 +641,7 @@ contains
    
    ! GR edit - custom fv_diag call for vorticity extraction from fv_diag 
    !call fv_diag(Atm(mytile:mytile), zvir, fv_time, Atm(mytile)%flagstruct%print_freq)
-   call fv_diag_gr(Atm(mytile:mytile), zvir, fv_time, Atm(mytile)%flagstruct%print_freq, vort850, rh250, rh500, rh700, rh850)
+   call fv_diag_gr(Atm(mytile:mytile), zvir, fv_time, Atm(mytile)%flagstruct%print_freq, vort850, rh250, rh500, rh700, rh850, swfq)
 
    call timing_off('FV_DIAG')
 

@@ -1623,6 +1623,7 @@ contains
        write(outunit,100) 'atm%rh500', mpp_chksum(atm%rh500)
        write(outunit,100) 'atm%rh700', mpp_chksum(atm%rh700)
        write(outunit,100) 'atm%rh850', mpp_chksum(atm%rh850)
+       write(outunit,100) 'atm%swfq', mpp_chksum(atm%swfq)
        write(outunit,100) 'atm%p_surf', mpp_chksum(atm%p_surf)
        write(outunit,100) 'atm%gust', mpp_chksum(atm%gust)
        do tr = 1,n_exch_tr

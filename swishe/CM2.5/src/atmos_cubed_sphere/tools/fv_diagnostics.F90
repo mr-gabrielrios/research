@@ -587,6 +587,15 @@ contains
        idiag%id_ts = register_diag_field ( trim(field), 'ts', axes(1:2), Time,  &
                                         'Skin temperature', 'K' )
 
+!-------------------------------------------------------
+! GR (2024-01-07) Generate SWISHE filter frequency grid
+!-------------------------------------------------------
+
+       ! idiag%id_swfq = register_diag_field (trim(field), 'swfq', axes(1:2), Time, &
+       !                               'SWISHE filtering frequency', '', &
+       !                                missing_value=missing_value )
+       ! idiag%id_swfq = 1
+
 !--------------------------
 ! 850-mb vorticity
 !--------------------------
@@ -2007,13 +2016,14 @@ contains
 
  end subroutine fv_diag
 
- subroutine fv_diag_gr(Atm, zvir, Time, print_freq, vort850, rh250, rh500, rh700, rh850)
+ subroutine fv_diag_gr(Atm, zvir, Time, print_freq, vort850, rh250, rh500, rh700, rh850, swfq)
 
     type(fv_atmos_type), intent(inout) :: Atm(:)
     type(time_type),     intent(in) :: Time
     real,                intent(in):: zvir
     integer,             intent(in):: print_freq
     real,                intent(inout) :: vort850(:, :)
+    real,                intent(inout) :: swfq(:, :)
     real,                intent(inout) :: rh250(:, :), rh500(:, :), rh700(:, :), rh850(:, :)
 
     integer :: isc, iec, jsc, jec, n, ntileMe
@@ -2365,7 +2375,8 @@ contains
            call interpolate_vertical(isc, iec, jsc, jec, npz, 850.e2, &
                                      Atm(n)%peln, wk(isc:iec,jsc:jec,:),a2)
            rh850 = a2
-                      
+           swfq = merge(1.0, 0.0, (rh850 .ge. 200.0)) ! GR (2023-01-05): set SWISHE filter frequency grid to 0
+
            if (idiag%id_rh50>0) then
                call interpolate_vertical(isc, iec, jsc, jec, npz, 50.e2, Atm(n)%peln, wk(isc:iec,jsc:jec,:), a2)
                used=send_data(idiag%id_rh50, a2, Time)
