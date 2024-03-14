@@ -2,170 +2,324 @@
 # Analytical packages
 import numpy as np, pandas as pd, xarray as xr
 # Utilities
-import datetime, os
+import importlib, datetime, os
 # Visualization
 import cartopy, cartopy.crs as ccrs
 import matplotlib, matplotlib.pyplot as plt
 # Internal methods
-import colormap_normalization as cn
-import tc_processing
-import utilities
+import derived, tc_processing, utilities, visualization
 
-def budget_timeseries(data, budget_type='h', level=500):
+matplotlib.rcParams['mathtext.fontset'] = 'cm'
+
+def storm_track(data, averaging_period=1, hourly_interval=3):
+    track = data['track_output'].iloc[range(0, len(data['track_output']))]
+    track['du_dt'] = track['max_wind'].diff()
     
-    ''' Get timeseries of a chosen MSE-based (let MSE = h) budget. 
-    1. Option 'h': h = c_p*T + g*z + L_v*q --> this is given at a specific level
-    2. Option 'dh_dt': dh_dt = (shflx + lhflx) + net_lw + net_sw + div(uh)
-    '''
+    du_dt_period = {}
+    for i in range(averaging_period*24 // hourly_interval, len(track)):
+        dt = track.iloc[i]['time'] - track.iloc[i-8]['time']
+        if dt == pd.Timedelta('1D'):
+            # print(track.iloc[i]['time'], track.iloc[i]['max_wind'] - track.iloc[i-8]['max_wind'])
+            du_dt_period[track.iloc[i]['time']] = track.iloc[i]['max_wind'] - track.iloc[i-8]['max_wind']
+        else:
+            du_dt_period[track.iloc[i]['time']] = np.nan
+    du_dt_period = pd.DataFrame.from_dict(du_dt_period, columns=['du_dt_period'], orient='index').reset_index(names=['time'])
     
-    ''' NEED TO INTEGRATE INTO XARRAY DATASET FOR EASIER ACCESSING'''
+    track = track.merge(du_dt_period, on='time', how='left')
+
+    data['track_output'] = track
     
-    # Get relevant constants
-    c_p = utilities.get_constants('c_p')
-    L_v = utilities.get_constants('L_v')
-    R_d = utilities.get_constants('R_d')
-    eps = utilities.get_constants('eps')
-    g = utilities.get_constants('g')
-    
-    # Initialize list to hold individual data snapshots
-    container = []
-    ''' Moist static energy (h). '''
-    if budget_type == 'h':
-        # Iterate over each timestamp
-        for timestamp in data['tc_vertical_output'].time.values:
-            # Shorthand for tc_vertical_output
-            iterdata = data['tc_vertical_output'].sel(time=timestamp).sel(pfull=level, method='nearest').dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
-            iterdata['c_p T'] = c_p*iterdata['temp']
-            iterdata['L_v q'] = L_v*iterdata['sphum']
-            iterdata['gz'] = (100*iterdata.pfull)/iterdata['rho']
-            container.append(iterdata)
-        data['tc_vertical_output'] = xr.concat(iterdata, dim='time')
-        
-    ''' Time tendency of moist static energy (dh_dt). '''
-    # Define residual term - this determines which term to calculate as a residua
-    residual_term = 'vi_flux_h' 
-    if budget_type == 'dh_dt':
-        # Initialize container array for the residual term
-        residual_budget = {}
-        # Define relevant budget terms
-        terms = ['dh_dt', 'thflx', 'net_lw', 'net_sw', 'vi_flux_h']
-        # Iterate over each timestamp
-        for t, timestamp in enumerate(data['tc_model_output'].time.values):
-            # Shorthand for tc_vertical_output
-            iterdata = data['tc_model_output'].sel(time=timestamp)
-            # Iterate over each term
-            for term in terms:
-                # Process dh_dt by using simple difference (dh_dt = (h[t] - h[t-1])/(time[t] - time[t-1]))
-                if term == 'dh_dt':
-                    # Get h[t] (curr)
-                    curr = data['tc_model_output']['vi_h'].isel(time=t)
-                    # Get h[t-1] (prev) and dh_dt
-                    if t > 0:
-                        prev = data['tc_model_output']['vi_h'].isel(time=(t-1))
-                        num = curr.dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all') - prev.dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
-                        den = (curr.time.values - prev.time.values).total_seconds()
-                        iterdata[term] = num/den
-                        # fig, ax = plt.subplots()
-                        # budget['data']['dh_dt'][timestamp].plot(ax=ax)
-                    # Fill the first timestep with nans
-                    else:
-                         iterdata[term] = xr.where(curr != -9999, 0, curr)
-                else:
-                    iterdata[term] = iterdata[term].dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
-            # Calculate residual term
-            iterdata[residual_term] = iterdata['net_lw'] + iterdata['net_sw'] + iterdata['thflx'] - iterdata['dh_dt']
-            container.append(iterdata)
-        # Concatenate
-        data['tc_model_output'] = xr.concat(container, dim='time')
-        
     return data
 
-def budget_timeseries_visualization(budget):
-    
-    # Select point for analysis - defaults to domain center
-    util_key = [k for k in budget['data'].keys()][0] # get sample key
-    util_value = [v for v in budget['data'][util_key].values()][0] # get sample data
-    # Pick domain center
-    center_x, center_y = [len(util_value['grid_xt']) // 2, len(util_value['grid_yt']) // 2]
-    # Define extent for averaging (note: average grid cell is ~0.5 degrees, "5" chosen to target +/- 2.5 degrees from center)
-    core_extent = 5
-    # Perform averaging
-    range_x, range_y = [slice(center_x - core_extent, center_x + core_extent), 
-                        slice(center_y - core_extent, center_y + core_extent)]
+def dh_dt(data):
+    ddt = []
+    for t, timestamp in enumerate(data['tc_model_output'].sortby('time', ascending=True).time.values):
+        if (t >= 1) and (t < len(data['tc_model_output'].sortby('time', ascending=True).time.values)-1):
+            dh_ = data['tc_model_output']['vi_h'].isel(time=t+1) - data['tc_model_output']['vi_h'].isel(time=t-1)
+            dt_ = (data['tc_model_output']['time'].isel(time=t+1) - data['tc_model_output']['time'].isel(time=t-1)).data/np.timedelta64(1, 's')
+            dh_dt_ = dh_/dt_
+            dh_dt_['time'] = timestamp
+            ddt.append(dh_dt_)
+        else:
+            ddt.append(data['tc_model_output']['vi_h'].isel(time=t)*np.nan)
+    data['tc_model_output']['dh_dt'] = xr.concat(ddt, dim='time')
 
-    # Initialize figure
-    fig, ax = plt.subplots(figsize=(6, 3))
-    # Plot zero line
-    ax.axhline(0, c='k')
-    # Iterate over each term
-    for term in budget['data'].keys():
-        # Plot date on x-axis, term value on y-axis  
-        ax.plot([k.isoformat() for k in budget['data'][term].keys()],
-                [v.isel(grid_xt=range_x, grid_yt=range_y).mean().values for v in budget['data'][term].values()], 
-                label='{0}'.format(term), lw=2, marker='o')
+    return data
+
+def storm_period_binning(data, diagnostic=False):
+
+    # Define averaging parameters
+    averaging_period = 1 # days
+    hourly_interval = 3 # hours
+    averaging_index_span = averaging_period*24 // hourly_interval
+    # Get track output from the data
+    data = storm_track(data, averaging_period=averaging_period)
+    # Shorthand for track data
+    track = data['track_output']
+    track = track.reset_index()
+    # Get storm ID
+    storm_id = track['storm_id'].unique()[0]
+
+    # Identify timestamp corresponding to LMI
+    lmi = track['time'].loc[track['max_wind'] == track['max_wind'].max()]
+    print('LMI occurs at {0}'.format(lmi))
     
-    # Format date
-    ax.xaxis.set_major_formatter(matplotlib.dates.ConciseDateFormatter(ax.xaxis.get_major_locator()))
-    # Format legend
-    fig.legend(ncols=len(budget.keys()), frameon=False, loc='upper center', bbox_to_anchor=(0.5, 1.1))
+    # Shift the locations where du_dt is calculated (differentials are calculated at the end of a given period, so this shifts it to the middle)
+    track['du_dt_period'] = track['du_dt_period'].shift(-(averaging_index_span//2))
+    # Define absolute intensity bins (same for all storms)
+    bins = [-np.inf, -2, 2, np.inf]
+    # Define period names
+    period_names = ['weakening', 'peak', 'intensification']
+    # Initialize dictionary
+    periods = {}
+    # Sample count
+    num_samples = 3
+    # Define times for future visualization of samplin
+    sampling_times = {period: {} for period in period_names}
+    # Iterate over each bin
+    for i, bin in enumerate(track.groupby(pd.cut(track['du_dt_period'], bins))):
+        # Unpack data (bin and data)
+        bin_name, bin_data = bin
+        print(period_names[i])
+
+        # New method pseudocode
+        # 1. identify LMI. This will tell me when I should look for peak/steady-state
+        # 2. identify intensification period. This must be before LMI.
+        # 3. identify peak/steady-state. This must be after intensification.
+        # 4. identify weakening period. This must be after intensification and peak.
     
-def budget_planar_visualization(input, time_index=0, vertical_level=None):
-    
-    ''' Data processing. '''
-    # Select the corresponding temporal index for each data subset.
-    data = input['tc_model_output'].isel(time=time_index).copy()
-    # Define the fields to be plotted by initializing a dictionary
-    fields = {'dh_dt': None, 'thflx': None, 'net_lw': None, 'net_sw': None, 'vi_flux_h': None}
-    # Select data based on the fields and load them into the dictionary
-    for field in fields.keys():
-        fields[field] = data[field].dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
-    
-    ''' Data visualization. '''
-    # Number of rows and columns based on field information, and initialize dictionary to hold subplot data
-    nrows, ncols, axes = 2, len(fields.keys()), {}
-    # Initialize figure
-    fig = plt.figure(figsize=(3*ncols, 3))
-    gs = matplotlib.gridspec.GridSpec(ncols=ncols, nrows=nrows, height_ratios=(1, 0.1))
-    # Iterate over each field to be plotted
-    for i, item in enumerate(fields.items()):
-        # Extract data
-        field, values = item
-        # Define the subplot and title it
-        axes[field] = fig.add_subplot(gs[0, i])
-        axes[field].set_title(field)
+        # Iterate through data to find the most representative data point for each bin
+        # If 'weakening', get most negative du_dt; if 'peak', get smallest du_dt; if 'strengthening', get maximum du_dt
+        if period_names[i] == 'intensification':
+            times = bin_data.sort_values('du_dt_period', ascending=False)
+            # times = times.loc[times < lmi] 
+        elif period_names[i] == 'peak':
+            bin_data['du_dt_period'] = bin_data['du_dt_period'].abs()
+            times = bin_data.sort_values('du_dt_period', ascending=True)['time']
+            # times = times.loc[times['time'] < lmi]['time']
+        elif period_names[i] == 'weakening':
+            times = bin_data.sort_values('du_dt_period', ascending=True)['time']
+            # times = times.loc[times > lmi]
+
+        print(times)
         
-        # Get normalization and colormap for the field of interest
-        norm, cmap = cn.norm_cmap(data=fields, param=field)
-        # Plot field of interest
-        im = axes[field].pcolormesh(fields[field].grid_xt, fields[field].grid_yt, fields[field],
-                                    norm=norm, cmap=cmap)
-        # Plot storm center
-        timestamp = input['tc_model_output'].isel(time=time_index-1).time.values.item()
-        timestamp = np.datetime64(datetime.datetime(year=timestamp.year+1900, month=timestamp.month, 
-                                                    day=timestamp.day, hour=timestamp.hour))
-        track_data = input['track_output'].loc[input['track_output'].time.values == timestamp]
-        center_lon, center_lat = track_data['center_lon'].values, track_data['center_lat'].values
-        axes[field].scatter(center_lon, center_lat, s=50, c='r', ec='k')
-        # Control plot extent based on center data
-        extent = 7.5
-        axes[field].set_xlim([center_lon - extent, center_lon + extent])
-        axes[field].set_ylim([center_lat - extent, center_lat + extent])
-        
-        ''' Colorbar. '''
-        # Assign axis
-        axes['colorbar_{0}'.format(field)] = fig.add_subplot(gs[1, i])
-        axes['colorbar_{0}'.format(field)].set_axis_off()
-        # Create shorthand for the axis name
-        cax = axes['colorbar_{0}'.format(field)].inset_axes([0, 0, 1, 0.5])
-        colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), 
-                                orientation='horizontal', cax=cax)
-        
-    # Plot storm metadata at given time
-    # fig.suptitle(data.time.values, y=1.1)
-        
-if __name__ == '__main__':
-    print('Running...')
-    data = tc_processing.main('HIRAM', 'C15w', storm_id='2056-0039')
-    data = budget_timeseries(data, budget_type='dh_dt')
+        # If more sample are requested than available, use all available
+        # Sampling method 1: get top 3 instances matching period-specific criteria
+        times = times.iloc[0:-1] if len(times) < num_samples else times.iloc[0:num_samples]
+        # Sampling method 2: get 3 timestamps surrounding the timestamp most matching the period-matching criteria
+        timestamp_index = times.index.values[0]        
+        times = track['time'].iloc[[timestamp_index-1, timestamp_index, timestamp_index+1]]
     
+        # Populate sample times for visualization
+        sampling_times[period_names[i]] = [t for t in times.values]
+        
+        # Adjust timestamps from Pandas datetime to cftime formats
+        timestamps = [utilities.time_adjust(model='HIRAM', timestamp=timestamp) for timestamp in times]
     
+        # Initialize and populate datasets
+        planar, vertical = [], []
+        for timestamp in timestamps:
+            planar.append(data['tc_model_output'].sel(time=timestamp))
+            vertical.append(data['tc_vertical_output'].sel(time=timestamp))
+    
+        # Concatenate data
+        planar, vertical = xr.concat(planar, dim='time'), xr.concat(vertical, dim='time')
+        
+        # Build dictionary for the  given intensification period
+        periods[period_names[i]] = {'bin': bin_name, 'time': timestamp}
+        periods[period_names[i]]['data'] = {'planar': planar, 'vertical': vertical}
+        # Diagnostic print statement
+        if diagnostic:
+            print('{0}\ndu/dt bin: {1} m s^-1; timestamps: \n'.format(period_names[i], timestamps))
+    
+    return periods, sampling_times, storm_id
+
+def lifetime_plots(data, sampling_times, storm_id):
+    
+    track = data['track_output']
+
+    fig, axes = plt.subplots(figsize=(12, 2), ncols=3)
+    
+    axes[0].plot(track['time'], track['max_wind'])
+    axes[0].xaxis.set_major_locator(matplotlib.dates.AutoDateLocator())
+    axes[0].set_xticklabels(axes[0].get_xticklabels(), rotation=30, ha='right')
+    axes[0].set_title('Maximum 10-meter winds', fontsize=10)
+    axes[0].annotate('{0}'.format(storm_id), xy=(0.03, 0.95), xycoords='axes fraction', ha='left', va='top', fontsize=10)
+    # Plot sampling points
+    period_colors = ['b', 'g', 'r']
+    for p, period in enumerate(sampling_times.keys()):
+        for t in sampling_times[period]:
+            axes[0].axvline(t, alpha=0.5, c=period_colors[p])
+    
+    axes[1].axhline(0, lw=0.5, c='k')
+    axes[1].plot(track['time'], track['du_dt_period'])
+    axes[1].set_xticklabels(axes[1].get_xticklabels(), rotation=30, ha='right')
+    axes[1].set_title('{0}-h change in 10-meter winds'.format(24), fontsize=10)
+    
+    axes[2].axvline(0, lw=0.5, c='k')
+    track['du_dt_period'].diff().hist(ax=axes[2], grid=False, bins=20)
+    axes[2].set_title('Histogram of 24-h change in 10-meter winds', fontsize=10)
+    
+def term_selection(periods):
+    
+    for period in periods.keys():
+        print('Processing data for the {0} period...'.format(period))
+        periods[period]['data']['budget'] = {'dh_dt': [], 'thf': [], 'q_rad': [],}
+        planar = periods[period]['data']['planar']
+    
+        for t in planar.time.values:
+            p = planar.sel(time=t)
+            p.load()
+    
+            # Get turbulent heat fluxes (THF)
+            q_h = p['shflx'].dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
+            q_l = p['lhflx'].dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
+    
+            if q_h.shape[0] > 30:
+                q_h = q_h.isel(grid_yt=slice(0, 30))
+            if q_h.shape[1] > 30:
+                q_h = q_h.isel(grid_xt=slice(0, 30))
+            
+            if q_l.shape[0] > 30:
+                q_l = q_l.isel(grid_yt=slice(0, 30))
+            if q_l.shape[1] > 30:
+                q_l = q_l.isel(grid_xt=slice(0, 30))
+            
+            periods[period]['data']['budget']['thf'].append(q_h + q_l)
+            # Get radiative convergence in column (q_rad)
+            q_sw = (-p['swup_toa'] + p['swdn_toa'] + p['swup_sfc'] - p['swdn_sfc']).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
+            q_lw = (p['lwup_sfc'] - p['olr']).dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
+            
+            if q_sw.shape[0] > 30:
+                q_sw = q_sw.isel(grid_yt=slice(0, 30))
+            if q_l.shape[1] > 30:
+                q_sw = q_sw.isel(grid_xt=slice(0, 30))
+            
+            if q_lw.shape[0] > 30:
+                q_lw = q_lw.isel(grid_yt=slice(0, 30))
+            if q_lw.shape[1] > 30:
+                q_lw = q_lw.isel(grid_xt=slice(0, 30))
+                
+            periods[period]['data']['budget']['q_rad'].append(q_sw + q_lw)
+            # Get MSE time tendency
+            ddt = p['dh_dt'].interp(grid_xt=periods[period]['data']['budget']['thf'][0].grid_xt, 
+                                    grid_yt=periods[period]['data']['budget']['thf'][0].grid_yt)
+            periods[period]['data']['budget']['dh_dt'].append(ddt)        
+    
+            # Turn on for troubleshooting
+            # print(q_h.shape, q_l.shape, q_sw.shape, q_lw.shape, ddt.shape)
+    
+        # Iterate over each key to get time mean and build composite xArray
+        for key in periods[period]['data']['budget'].keys():
+            # Make shorthand for iterand term
+            kd = periods[period]['data']['budget'][key]
+            # Extract data values, stack arrays on each other, and get mean
+            coord_x = kd[0].grid_xt - kd[0].isel(grid_xt=len(kd[0].grid_xt)//2).grid_xt
+            coord_y = kd[0].grid_yt - kd[0].isel(grid_yt=len(kd[0].grid_xt)//2).grid_yt
+            # Extract data values, stack arrays on each other, and get mean
+            kdd = np.nanmean(np.stack([kd[i] for i in range(0, len(kd))]), axis=0)
+            # Construct DataArray
+            periods[period]['data']['budget'][key] = xr.DataArray(data=kdd,
+                                                                  dims=['TC_xt', 'TC_yt'],
+                                                                  coords={'TC_xt': (['TC_xt'], coord_x.data),
+                                                                          'TC_yt': (['TC_yt'], coord_y.data)})
+        # Get residual
+        periods[period]['data']['budget']['-div_u_h'] = periods[period]['data']['budget']['dh_dt'] - periods[period]['data']['budget']['thf'] - periods[period]['data']['budget']['q_rad']
+
+    return periods
+
+def main(storms, troublshooting=True):
+    output = []
+    for storm in storms:
+        print(storm)
+        filename = storm
+        # Read data int
+        data = pd.read_pickle(filename)
+        # Derive MSE time tendency
+        data = dh_dt(data)
+        # Sample the TC at points where intensification, steady-state (peak), and weakening occur
+        if troublshooting:
+            periods, sampling_times, storm_id = storm_period_binning(data)
+        else:
+            try:
+                periods, sampling_times, storm_id = storm_period_binning(data)
+            except:
+                print('Not enough data found, proceeding to the next one...')
+                continue
+        # Generate plots to show where sampling occurs relative to the storm lifetime
+        lifetime_plots(data, sampling_times, storm_id)
+        # Build the MSE time tendency budget
+        # periods = term_selection(periods)
+        # output.append(periods)
+    return output
+
+N = 1
+dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs/processed'
+outputs = {'control': [], 'swishe': []}
+for experiment in outputs.keys():
+    storms = [os.path.join(dirname, filename) for filename in os.listdir(dirname) if 'HIRAM-8xdaily' in filename and experiment in filename][:N]
+    outputs[experiment] = main(storms)
+
+outputs['swishe-control'] = []
+for n in range(0, min(len(outputs['control']), len(outputs['swishe']))):
+    temp = {}
+    for period in outputs['control'][n].keys():
+        temp[period] = {'data': {'budget': {}}}
+        for term in outputs['control'][n][period]['data']['budget'].keys():
+            # Derive raw difference from experiments
+            delta = outputs['swishe'][n][period]['data']['budget'][term].values - outputs['control'][n][period]['data']['budget'][term].values
+            # Construct DataArray for difference
+            temp[period]['data']['budget'][term] = xr.DataArray(data=delta,
+                                                                dims=['TC_xt', 'TC_yt'],
+                                                                coords={'TC_xt': (['TC_xt'], outputs['control'][n][period]['data']['budget'][term].TC_xt.data),
+                                                                        'TC_yt': (['TC_yt'], outputs['control'][n][period]['data']['budget'][term].TC_yt.data)})
+
+    outputs['swishe-control'].append(temp)
+    
+importlib.reload(visualization)
+
+experiment = 'swishe'
+
+budget_terms = {'dh_dt': '$\partial_t h$',
+                'thf': '$\ddot{q}_{\mathrm{surf}} = \\ddot{q}_h$ + $\\ddot{q}_l$',
+                'q_rad': '$\ddot{q}_{\mathrm{rad}} = \\ddot{q}_{SW}$ + $\\ddot{q}_{LW}$',
+                '-div_u_h': '$-\\nabla_h \cdot \\left(\\widehat{ \\mathbf{u}h }\\right) $'}
+
+for period in list(outputs[experiment][0].keys())[::-1]:
+
+    sample = outputs[experiment][0][period]['data']['budget']
+    
+    ncols = len(sample.keys())
+    fig, gs = plt.figure(figsize=(2*ncols, 4), dpi=96), matplotlib.gridspec.GridSpec(nrows=1, ncols=ncols)
+
+    for i, term in enumerate(sample.keys()):
+        print(period, term)
+        ax = fig.add_subplot(gs[0, i])
+        ax.set_title(budget_terms[term], y=1.35)
+
+        out = np.nanmean(np.stack([outputs[experiment][i][period]['data']['budget'][term] for i in range(0, len(outputs[experiment]))]), axis=0)
+    
+        norm, cmap = visualization.norm_cmap(out, term,
+                                             num_bounds=16, extrema=None, white_adjust=False) 
+        
+        im = ax.pcolormesh(sample[term].TC_xt, 
+                           sample[term].TC_yt, 
+                           out, norm=norm, cmap=cmap)
+        
+        cax = ax.inset_axes([0, 1.05, 1, 0.05])
+
+        if sum(np.isnan(norm.boundaries)) == len(norm.boundaries):
+            norm = matplotlib.colors.Normalize()
+            colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax, orientation='horizontal')
+        else:
+            colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax, orientation='horizontal')
+        cax.xaxis.set_major_locator(matplotlib.ticker.AutoLocator())
+        cax.xaxis.tick_top()
+        cax.xaxis.set_label_position('top')
+    
+        if i > 0:
+            ax.set_yticklabels([])
+        ax.set_aspect('equal')
+
+    fig.tight_layout()
+    fig.suptitle(period, y=1)
