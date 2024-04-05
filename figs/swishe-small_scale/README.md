@@ -81,3 +81,10 @@ This `readme` is intended to provide a summary of what each figure is and how to
 		- Number of records used for the composite for HIRAM, control, b3: 243
 		- Number of records used for the composite for HIRAM, swishe, b3: 203
 
+- Number of records used for the composite for AM2.5, control, b1: 12
+- Number of records used for the composite for AM2.5, control, b1: 120
+- Number of records used for the composite for AM2.5, swishe, b1: 109
+- Number of records used for the composite for FLOR, control, b1: 120
+- Number of records used for the composite for FLOR, swishe, b1: 121
+- Number of records used for the composite for HIRAM, control, b1: 118
+- Number of records used for the composite for HIRAM, swishe, b1: 124
