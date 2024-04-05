@@ -10,24 +10,32 @@ def directories(model, experiment, data_type='model_output'):
     Method to log the directories of all raw model runs and return a corresponding path.
     """
     
-    dirnames = {'AM2.5': {'control': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
-                                      'model_output': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_tigercpu_intelmpi_18_540PE/POSTP'},
-                          'swishe': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
-                                      'model_output': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/POSTP'}},
+    dirnames = {'AM2.5': {'control': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                      'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s/POSTP'},
+                          'swishe': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s_swishe/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                      'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s_swishe/POSTP'}},
                 'AM2.5C360': {'control': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5C360/work/CTL1990s_tigercpu_intelmpi_18_1080PE/analysis_lmh/cyclones_gav_ro110_330k',
                                           'model_output': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5C360/work/CTL1990s_tigercpu_intelmpi_18_1080PE/POSTP'},
                               'swishe': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5C360/work/CTL1990s_swishe_tigercpu_intelmpi_18_1080PE/analysis_lmh/cyclones_gav_ro110_330k',
                                          'model_output': '/tiger/scratch/gpfs/GEOCLIM/gr7610/AM2.5C360/work/CTL1990s_swishe_tigercpu_intelmpi_18_1080PE/POSTP'}},
-                'FLOR': {'control': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_v201905_tigercpu_intelmpi_18_576PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
-                                     'model_output': '/tiger/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_v201905_tigercpu_intelmpi_18_576PE/POSTP'},
-                          'swishe': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_v201905_swishe_tigercpu_intelmpi_18_576PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
-                                     'model_output': '/tiger/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_v201905_swishe_tigercpu_intelmpi_18_576PE/POSTP'}},
-                'HIRAM': {'control': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/HIRAM/work/CTL1990s_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
-                                      'model_output': '/tiger/scratch/gpfs/GEOCLIM/gr7610/HIRAM/work/CTL1990s_tigercpu_intelmpi_18_540PE/POSTP'},
-                          'swishe': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/HIRAM/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
-                                     'model_output': '/tiger/scratch/gpfs/GEOCLIM/gr7610/HIRAM/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/POSTP'}}}
+                'FLOR': {'control': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                     'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s/POSTP'},
+                          'swishe': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_swishe/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                     'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s/POSTP'}},
+                'HIRAM': {'control': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/HIRAM/CTL1990s/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                      'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/HIRAM/CTL1990s/POSTP'},
+                          'swishe': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/HIRAM/CTL1990s_swishe/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                     'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/HIRAM/CTL1990s_swishe/POSTP'}},
+                'HIRAM-8xdaily': {'control': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/HIRAM/CTL1990s-8xdaily_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                              'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/HIRAM/CTL1990s-8xdaily_tigercpu_intelmpi_18_540PE/POSTP'},
+                                  'swishe': {'track_data': '/tiger/scratch/gpfs/GEOCLIM/gr7610/HIRAM/work/CTL1990s_swishe-8xdaily_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                             'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/HIRAM/CTL1990s_swishe-8xdaily_tigercpu_intelmpi_18_540PE/POSTP'}}}
     
     return dirnames[model][experiment][data_type]
+
+def month_letter(month):
+    month_letters = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D']
+    return month_letters[month-1]
 
 def access(model, experiment, storm_type, storm_id=None, processed=False):
     
@@ -53,6 +61,9 @@ def access(model, experiment, storm_type, storm_id=None, processed=False):
     filename = None
     # If a specific storm ID is given, check for it
     storm_exists = False # check for storm existence - True if exists
+    
+    print(files, storm_id)
+    
     if storm_id:
         # Get list of storms that match the storm ID
         storm_check_list = [file for file in files if storm_id in file]
@@ -73,7 +84,7 @@ def access(model, experiment, storm_type, storm_id=None, processed=False):
         
     return filename, data
 
-def time_adjust(model, timestamp, method='pandas_to_cftime'):
+def time_adjust(model=None, timestamp=None, method='pandas_to_cftime'):
     """Method to adjust datetime conventions.
 
     Arguments:
@@ -88,12 +99,12 @@ def time_adjust(model, timestamp, method='pandas_to_cftime'):
     # Note: converting from 'cftime' to 'datetime' results in an addition of 1900 for models not affected by 'year_adjust' years 
     if method == 'pandas_to_cftime':
         # Define adjustment interval for select models
-        year_adjust = 0 if model == 'FLOR' else 1900
+        year_adjust = 1900 if ((timestamp.year >= 1900) & (model != 'FLOR')) else 0
         out = cftime.DatetimeNoLeap(year=timestamp.year-year_adjust, month=timestamp.month, day=timestamp.day, hour=timestamp.hour)
         return out
     elif 'cftime_to_pandas':
         # Define adjustment interval for select models
-        year_adjust = 1900 if model == 'FLOR' else 0
+        year_adjust = 1900 if timestamp.year >= 1900 else 0
         out = datetime.datetime(year=timestamp.year + 1900 - year_adjust, month=timestamp.month, day=timestamp.day, hour=timestamp.hour)
         return pd.to_datetime(out)
     
@@ -110,7 +121,7 @@ def get_constants(name):
     return constants[name]
 
 def coords_to_dist(a, b):
-    ''' Convert coordinates to distance in meters. '''
+    ''' Convert coordinates to distance in meters using the Haversine formula. '''
     
     R = 6371e3
     
@@ -130,7 +141,7 @@ def distance_grid(data):
 
     ''' Method to approximate the distance between grid points on the GFDL cubed-sphere grid. '''
     
-    distances = np.full(shape=(len(data.grid_yt), len(data.grid_xt)), fill_value=np.nan)
+    distance_lon = np.full(shape=(len(data.grid_yt), len(data.grid_xt)), fill_value=np.nan)
     for i, lat in enumerate(data.grid_yt.values):
         for j, lon in enumerate(data.grid_xt.values):
             if i < (len(data.grid_yt.values) - 1) and j < (len(data.grid_xt.values) - 1):
@@ -138,13 +149,40 @@ def distance_grid(data):
             # Handle the boundary condition by assuming periodicity in x
             else:
                 lon_next, lon_curr = data.grid_xt.values[0], data.grid_xt.values[j]
-            distances[i, j] = coords_to_dist((lon_curr, lat), (lon_next, lat))
-    out = xr.DataArray(data=distances,
-                       dims=('grid_yt', 'grid_xt'),
-                       coords=[data.grid_yt, data.grid_xt])
-    return out
+            distance_lon[i, j] = coords_to_dist((lon_curr, lat), (lon_next, lat))
+    distance_lon = xr.DataArray(data=distance_lon, dims=('grid_yt', 'grid_xt'), coords=[data.grid_yt, data.grid_xt])
+    
+    sample_index = 6
+    distance_lat = np.full(shape=(len(data.grid_yt), len(data.grid_xt)), 
+                   fill_value=coords_to_dist((data.grid_xt.values[sample_index], data.grid_yt.values[sample_index]), 
+                                             (data.grid_xt.values[sample_index], data.grid_yt.values[sample_index+1])))
+    distance_lat = xr.DataArray(data=distance_lat, dims=('grid_yt', 'grid_xt'), coords=[data.grid_yt, data.grid_xt])
+    
+    return distance_lon, distance_lat
 
-def domain_differentiation(data, distance, field, dim):
+def area_weighted(data, function='average', extent=[0, 360, -60, 60]):
+    """
+    Helper function to generate area-weighted averages for a given field and domain (atmosphere or ocean).
+    """
+    
+    # Check if 'ocean' is in the data dimensions. Rename dimensions if so
+    if 'ocean' in ''.join(data.dims):
+        data = data.rename({'xt_ocean': 'grid_xt', 'yt_ocean': 'grid_yt', 'st_ocean': 'pfull'})
+        
+    if function == 'average':
+        mean = data.weighted(np.cos(np.deg2rad(data.grid_yt))).mean(['grid_xt', 'grid_yt'])
+        std = data.weighted(np.cos(np.deg2rad(data.grid_yt))).std(['grid_xt', 'grid_yt'])
+        return mean
+    elif function == 'sum':
+        sum = data.weighted(np.cos(np.deg2rad(data.grid_yt))).sum(['grid_xt', 'grid_yt'])
+        return sum
+
+def month_selector(month, start, end=None):
+    ''' Helper function that takes a DataArray time.month index and integer arguments for start and end months for xArray time indexing, end-inclusive. '''
+    end = start if not end else end
+    return (month >= start) & (month <= end)
+
+def domain_differentiation(data, dim):
 
     ''' 
     Differentiate an xarray DataArray field along a given dimension to preserve shape. 
@@ -157,18 +195,26 @@ def domain_differentiation(data, distance, field, dim):
         data = data.drop_dims(drop_dim) if drop_dim in data.dims else data
     
     # Ensure proper dimensional order
-    data = data.transpose('time', 'grid_xt', 'grid_yt', 'pfull')
+    if 'pfull' in data.dims:
+        data = data.transpose('time', 'grid_xt', 'grid_yt', 'pfull')
+    else:
+        data = data.transpose('time', 'grid_xt', 'grid_yt')
+    
+    # Get distance between grid points (essentially, distance_lon = dx, distance_lat = dy)
+    distance_lon, distance_lat = distance_grid(data)
+    distance = distance_lon if dim == 'grid_xt' else distance_lat
     
     # Get the bulk differentiation (will result in an output with the shape of data, minus one entry in the differentiation dimension)
-    a = data[field].diff(dim=dim)/distance
+    a = data.diff(dim=dim)/distance
     # Get the last row/columns of the differentiation array and repeat to append to bulk array and preserve original dimensions
     b = a[{dim: -1}]
+    
     # Concatenate along respective axes
     if dim == 'grid_xt':
-        b_ = b.values[:, np.newaxis, :, :]
+        b_ = b.values[:, np.newaxis, :, :] if 'pfull' in data.dims else b.values[:, np.newaxis, :]
         c = xr.DataArray(data=np.concatenate((a.values, b_), axis=1), dims=a.dims)
     elif dim == 'grid_yt':
-        b_ = b.values[:, :, np.newaxis, :]
+        b_ = b.values[:, :, np.newaxis, :] if 'pfull' in data.dims else b.values[:, :, np.newaxis]
         c = xr.DataArray(data=np.concatenate((a.values, b_), axis=2), dims=a.dims)
     return c
 
@@ -190,7 +236,7 @@ def intensity_binning(mode='track_output', data=None, intensity_metric='max_wind
 
     # Define the intensity bins
     if intensity_metric == 'max_wind':
-        intensity_bin_limits = [0, 15, 35, np.inf] 
+        intensity_bin_limits = [0, 15, 32.5, np.inf] 
     elif intensity_metric == 'min_slp':
         intensity_bin_limits = [np.inf, 1000, 970, 940, 0]
     # Create the bin data structure, with bin numbers as keys and bin bounds and data as subdictionaries
@@ -313,6 +359,8 @@ def retrieve_tracked_TCs(model, experiment, storm_type, year_range, config=None)
     # Retrieve directory containing parent directory for track data
     dirname = directories(model, experiment, data_type='track_data')
     
+    print(year_range, dirname)
+    
     ''' File collection. '''
     # Get filenames for all files within the specified directory 
     # Filenames will correspond to the determined storm type    
@@ -328,9 +376,15 @@ def retrieve_tracked_TCs(model, experiment, storm_type, year_range, config=None)
     if dirname == '/tigress/GEOCLIM/grios/HIRAM/exp/CTL1990_v201905/analysis_lmh/cyclones_gav_ro110_1C_330k':
         fnames = [f for f in fnames]
     else:
-        year_adjust = 0 if 'FLOR' in dirname else 1900
+        year_adjust = 0 if 'FLOR' in dirname else 0
+        print('Years evaluated from LMH output: {0} to {1}'.format(min(year_range) + year_adjust, max(year_range) + year_adjust))
+        # fnames = [f for f in fnames 
+        #           if min(year_range) + year_adjust <= pd.to_datetime(f.split('.')[-2].split('-')[0]).year <= max(year_range) + year_adjust]
         fnames = [f for f in fnames 
-                  if min(year_range) + year_adjust <= pd.to_datetime(f.split('.')[-2].split('-')[0]).year <= max(year_range) + year_adjust]
+                  if min(year_range) + year_adjust <= datetime.datetime(year=int(f.split('/')[-3].split('_')[-1]), month=1, day=1).year <= max(year_range) + year_adjust]
+    
+    
+    [print(fn, pd.to_datetime(f.split('.')[-2].split('-')[0]), f) for fn, f in enumerate(sorted(fnames))]
     
     # Concatenate all tracked TC data from the filename list
     data = pd.concat([lmh_parser(os.path.join(dirname, fname)) for fname in fnames])
@@ -358,7 +412,7 @@ def retrieve_tracked_TCs(model, experiment, storm_type, year_range, config=None)
         
         ''' Velocity (speed, direction) derivation. '''
         # Initialize dictionary for preliminary storage. Will be reassigned into the DataFrame by the join() method using time as the matching criterion.
-        velocity = {'time': [storm.iloc[0]['time']], 'speed': [np.nan], 'direction': [np.nan]}
+        velocity = {'time': [storm.iloc[0]['time']], 'speed': [np.nan], 'direction': [np.nan], 'ucomp': [np.nan], 'vcomp': [np.nan]}
         # Iterate over all of the iterand storm timestamps
         for i in range(1, len(storm)):
             # Define coordinates for two points considered (i, i-1)
@@ -371,11 +425,16 @@ def retrieve_tracked_TCs(model, experiment, storm_type, year_range, config=None)
             # Get changes in longtiude and latitude
             dlon, dlat = lon_b - lon_a, lat_b - lat_a
             # Derive direction relative to north (range of 0 to 360)
-            direction = 180*np.arctan(dlon/dlat)/np.pi % 360
+            direction = np.mod(np.arctan2(dlon, dlat)*180/np.pi, 360)
+            # Derive storm motion zonal and meridional
+            ucomp = speed*np.sin(np.deg2rad(360-direction))
+            vcomp = speed*np.cos(np.deg2rad(360-direction))
             # Append quantities to the 'velocity' dictionary
             velocity['time'].append(storm.iloc[i]['time'])    
             velocity['speed'].append(speed)    
             velocity['direction'].append(direction)
+            velocity['ucomp'].append(ucomp)
+            velocity['vcomp'].append(vcomp)
         # Build DataFrame
         velocity = pd.DataFrame(velocity)
         # Re-cast time column as a datetime object
@@ -407,4 +466,56 @@ def retrieve_tracked_TCs(model, experiment, storm_type, year_range, config=None)
         # Rename columns for future addition into xArray Dataset, and reset index
         data = data.rename(columns={'lon': 'center_lon', 'lat': 'center_lat', 'flag': 'core_temp', 'slp': 'min_slp'}).reset_index(drop=True)
         return data
-  
+
+def file_counter(model_names=['AM2.5', 'FLOR', 'HIRAM'], num_files=10):
+    """
+    This method takes all tracked TCs from the Harris TC tracker and gets the ratio of SWISHE to control storms to ensure representative sampling for analytical methods.
+
+    Args:
+        num_files (int, optional): number of files desired. Defaults to 10.
+
+    Returns:
+        file_counts (dict): dictionary with the number of files to process per intensity bin.
+    """
+    # Load track data from a saved file to obtain the distribution of storm intensities
+    filename = '/projects/GEOCLIM/gr7610/analysis/tc_storage/track_data-TS-2001_2050.pkl'
+    with open(filename, 'rb') as f:
+        data = pickle.load(f)
+        
+    # Collect data for output counts per model
+    counts = {model: {} for model in model_names}
+    # Parameter used for intensity binning
+    param = 'max_wind'
+    # Determine number of bins for wind speed
+    wind_bins = np.arange(10, 50, 4)
+    # Get the approximate number of storms per bin
+    binwise_multiplier = int(np.ceil(num_files/len(wind_bins)))
+
+    # Iterate over all models and experiments
+    for model in model_names:
+        counts[model] = {experiment: {} for experiment in data[model].keys()}
+        for experiment in data[model].keys():
+            # Get unique values for the parameter passed
+            out = data[model][experiment]['unique'][param].dropna()
+            # Filter out nans and infs
+            out = out.loc[np.isfinite(out.values)]
+            # Get bin values and bin edges
+            n, bins = np.histogram(out, bins=wind_bins) 
+            # Add approximate data count per intensity bin
+            counts[model][experiment] = {bins[i]: n[i] for i in range(0, len(bins)-1)}
+    
+    # Build DataFrame to facilitate relative file number calculation per model/experiment configuration
+    counts = {(model, experiment): values for model, model_data in counts.items() for experiment, values in model_data.items()}
+    counts = pd.DataFrame.from_dict(counts, orient='columns')
+    # Get the ratios
+    for model in model_names:
+        sample_model = model_names[0]
+        counts[model, 'file_count_control'] = ((1-counts[sample_model]['swishe']/(counts[sample_model]['control'] + counts[sample_model]['swishe'])).fillna(0)*binwise_multiplier).round(0).astype(int)
+        counts[model, 'file_count_swishe'] = ((counts[sample_model]['swishe']/(counts[sample_model]['control'] + counts[sample_model]['swishe'])).fillna(0)*binwise_multiplier).round(0).astype(int)
+    # Get file counts and output as a dictionary
+    file_counts = {model: {} for model in model_names}
+    for model in model_names:
+        for experiment in data[model].keys():
+            file_counts[model][experiment] = counts[model, 'file_count_{0}'.format(experiment)].to_dict()
+        
+    return file_counts

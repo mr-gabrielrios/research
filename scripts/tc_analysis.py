@@ -5,7 +5,7 @@ import os, pickle, random
 
 import composite, utilities
 
-def tc_model_data(models, experiments, storm_type, num_storms=-1):
+def tc_model_data(models, experiments, storm_type, num_storms=-1, single_storm_id=None):
     
     """
     Method to load data into a 3-tiered dictionary:
@@ -35,19 +35,28 @@ def tc_model_data(models, experiments, storm_type, num_storms=-1):
             # If the storm_type is TS, limit storm LMI winds to 30 m s^-1
             if storm_type == 'TS':
                 storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] for f in os.listdir(dirname)
-                            if (model in f) and (experiment in f) and (storm_type in f) and (int(f.split('-')[7]) < 30)]
+                            if (model in f) and (experiment in f) and (storm_type in f) and (int(f.split('-')[7]) < 35)]
             else:
                 storm_ids = [f.split('-')[4] + '-' + f.split('-')[5] for f in os.listdir(dirname)
                             if (model in f) and (experiment in f) and (storm_type in f)]
             # and randomly select 'num_storms' number of storms
-            storm_id_subset = random.sample(storm_ids, num_storms) if num_storms <= len(storm_ids) and num_storms != -1 else storm_ids
+            if single_storm_id:
+                storm_id_subset = storm_ids
+            else:
+                storm_id_subset = random.sample(storm_ids, num_storms) if num_storms <= len(storm_ids) and num_storms != -1 else storm_ids
             print('\t Storms to be processed: {0}'.format(storm_id_subset))
             # Initialize a storage list for the storms 
             data[model][experiment] = {'data': []}
             # Iterate over all storms found
             for storm_id in storm_id_subset:
                 # Access the processed data
-                storm_filename, storm = utilities.access(model, experiment, storm_type=storm_type, storm_id=storm_id, processed=True)
+                if single_storm_id and single_storm_id == storm_id:
+                    print('Only picking up: {0}'.format(single_storm_id))
+                    storm_filename, storm = utilities.access(model, experiment, storm_type=storm_type, storm_id=storm_id, processed=True)
+                elif single_storm_id and single_storm_id != storm_id:
+                    continue
+                else:
+                    storm_filename, storm = utilities.access(model, experiment, storm_type=storm_type, storm_id=storm_id, processed=True)
                 print('\t \t Processing {0} from {1}'.format(storm_id, storm_filename))
                 # Append to storage list
                 data[model][experiment]['data'].append(storm)
@@ -76,7 +85,7 @@ def tc_track_data(models, experiments, storm_type='C15w', snapshot_type='lmi', y
     # Iterate over each model
     for model in models:
         # Adjust years for FLOR, if the iterand model
-        model_year_range = [year + 1900 for year in year_range] if model == 'FLOR' else year_range
+        model_year_range = [year + 1900 for year in year_range] if model == 'HiFLOR' else year_range
         # Initialize dictionary for the model
         data[model] = {}
         # Iterate over each experiment
@@ -177,7 +186,3 @@ def counts(mode='track_output', data=None):
     bin_counts = pd.DataFrame.from_dict(bin_counts, orient='columns')
     
     return storm_counts, bin_counts
-  
-# if __name__ == '__main__':
-#     models, experiments = ['HIRAM'], ['control', 'swishe']
-#     data = tc_model_data(models, experiments, num_storms=5)
