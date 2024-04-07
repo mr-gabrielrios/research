@@ -2,7 +2,7 @@ import cartopy, cartopy.crs as ccrs
 import numpy as np, os, pandas as pd, scipy as sp, xarray as xr
 import cmap as cmap_pkg, matplotlib, matplotlib.pyplot as plt
 
-import accessor, composite, utilities
+import accessor, composite, utilities, tc_analysis
 
 class ScalarFormatterForceFormat(matplotlib.ticker.ScalarFormatter):
     ''' This method is an override to the ScalarFormatter used to create a common scientific exponent for an axis. '''
@@ -47,7 +47,8 @@ def cmap_white_adjust(cmap, levels=16):
     cm = cm(np.arange(cm.N))
     # Replace the first instance with a pure white entry
     # cm = cm[:, :] + np.array([1-cm[:10, 0], 1-cm[:10, 1], 1-cm[:10, 2], 1-cm[:10, -1]])
-    cm[:samples//(levels+1), :] = np.array([1, 1, 1, 1])
+    cm[:samples//(levels-2), :] = np.array([1, 1, 1, 1])
+    # cm[:samples//(levels//2), :] = np.array([1, 1, 1, 1])
     # Cast the adjusted colormap as a new map
     cm = matplotlib.colors.ListedColormap(cm)
     
@@ -103,7 +104,7 @@ def diverging_colormap_adjust(cmap, fraction=0.1):
     
     return matplotlib.colors.LinearSegmentedColormap.from_list(cmap, list(zip(nodes, colors)))
 
-def norm_cmap(data, field, num_bounds=16, extrema=None, white_adjust=False):
+def norm_cmap(data, field, num_bounds=16, extrema=None, white_adjust=False, cmap_white_fraction=0.1):
     """
     Method to derive normalization and colormap for a given list of numeric arrays and field.
 
@@ -155,7 +156,7 @@ def norm_cmap(data, field, num_bounds=16, extrema=None, white_adjust=False):
                         'RdPu', 'BuPu', 'GnBu', 'PuBu', 'YlGnBu', 'PuBuGn', 'BuGn', 'YlGn']
     # Perform white adjustment for colormaps (set lowest color to white for sequential, center to white for diverging)
     if white_adjust:
-        cmap = cmap_white_adjust(cmap) if cmap in sequential_cmaps else diverging_colormap_adjust(cmap, fraction=0.1)
+        cmap = cmap_white_adjust(cmap, levels=num_bounds) if cmap in sequential_cmaps else diverging_colormap_adjust(cmap, fraction=cmap_white_fraction)
         
     return norm, cmap
 
@@ -1136,7 +1137,7 @@ def pdf(data, models=['AM2.5', 'FLOR', 'HIRAM'], param='center_lat', num_bins=60
         
     return counts
 
-def swishe_frequency(models=['HIRAM', 'AM2.5', 'FLOR'], dpi=144):
+def swishe_frequency(models=['HIRAM', 'AM2.5', 'FLOR'], dpi=144, set_visible=True):
     """Plot frequency of SWISHE filter application using the 'swfq' diagnostic on 'atmos_4xdaily' files for SWISHE runs.
 
     Args:
@@ -1172,6 +1173,11 @@ def swishe_frequency(models=['HIRAM', 'AM2.5', 'FLOR'], dpi=144):
         
         long_name, units = field_properties('swfq')
         colorbar.set_label('{0}'.format(units), rotation=270, labelpad=20)
+        
+    if not set_visible:
+        plt.clf()
+        
+    return data
 
 def basemap(fig, gs, model_name, experiment, year_range=None, row_num=0, col_num=0, extent=[0, 359, -60, 60], land=False, xlabel=True, ylabel=True):
     """
@@ -1281,3 +1287,73 @@ def basins(visualize=False):
         plt.show()
 
     return basins
+
+def swishe_TC_overlay(model_name, years=None, bin_resolution=2.5, dpi=144):
+    
+    start_year, end_year = min(years), max(years)
+    track_data = tc_analysis.tc_track_data([model_name], ['control', 'swishe'], year_range=(start_year, end_year), storm_type='TS')
+    
+    ''' Data processing. '''
+    # Initialize dictionary for spatial density
+    density = {}
+    # Iterate over each model provided
+    for model in track_data.keys():
+        # Initialize model-specific subdictionary
+        density[model] = {}
+        # Iterate over each experiment provided
+        for experiment in track_data[model].keys():
+            # Define storage list for TC data
+            dataset = [] 
+            # Iterate through each unique TC and resample by day to get number of TC days per grid point
+            for storm_id in track_data[model][experiment]['raw']['storm_id'].unique():
+                dataset.append(track_data[model][experiment]['raw'].loc[track_data[model][experiment]['raw']['storm_id'] == storm_id].resample('D', on='time').first().reset_index())
+            dataset = pd.concat(dataset)
+            # Define dictionary to hold data relevant to track density heatmap
+            counts = {'lon': [], 'lat': [], 'count': [], 'num_storms': []}
+            # Group DataFrame into defined bins and add storm counts to the dictionary
+            for lon_g, lon_v in dataset.groupby(pd.cut(dataset['center_lon'], np.arange(0, 360+bin_resolution, bin_resolution))):
+                for lat_g, lat_v in lon_v.groupby(pd.cut(lon_v['center_lat'], np.arange(-90, 90+bin_resolution, bin_resolution))):
+                    counts['lon'].append(lon_g.left)
+                    counts['lat'].append(lat_g.left)
+                    counts['count'].append(len(lat_v))
+                    counts['num_storms'].append(len(dataset))
+            # Create DataFrame from the dictionary
+            counts = pd.DataFrame(counts)
+            # Add time metadata to the DataFrame for bin per year estimate
+            counts['time_min'], counts['time_max'] = dataset['time'].min(), dataset['time'].max()
+            # Concatenate to get comprehensive DataFrame
+            density[model][experiment] = counts
+            
+    # Collect processed density maps. Note: the difference will be calculated for the last subplot.
+    densities = {}
+    # Pass 1: Iterate through experiments to get each experiment's density data.
+    for model in [model_name]:
+        # Initialize subdictionary for the iterand model
+        densities[model] = {}
+        # Iterate over each given experiment
+        for experiment in ['control', 'swishe']:
+            # Get longitude and latitude bins
+            x, y = density[model][experiment].lon.unique(), density[model][experiment].lat.unique()
+            # Get density array
+            v = np.reshape(density[model][experiment]['count'].values, (len(x), len(y)))
+            # Assign to dictionary for the given model/experiment configuration. 
+            # Normalize by number of years and by day (assume 6-hourly data, so 6 x 4 = 1 day)
+            densities[model][experiment] = v.T/(end_year - start_year)
+            
+    fig, gs = plt.figure(figsize=(8, 3), dpi=dpi), matplotlib.gridspec.GridSpec(nrows=1, ncols=1)
+    fig, gs, ax, proj_ref = basemap(fig, gs, model_name, 'Track density & SWISHE application', year_range=(start_year, end_year), land=True)
+
+    contours = np.arange(0, 1.6 + 0.2, 0.2)
+    norm = matplotlib.colors.BoundaryNorm(contours, 256)
+    cmap = cmap_white_adjust('Blues', levels=len(contours)-1)
+
+    im = ax.contourf(x, y, densities[model_name]['control'], transform=proj_ref, norm=norm, cmap=cmap, levels=len(contours)-1)
+
+    swishe_contours = swishe_frequency(models=[model_name], dpi=144, set_visible=False)
+    im_swishe = ax.contour(swishe_contours.grid_xt, swishe_contours.grid_yt, 100*swishe_contours.sum(dim='time')/len(swishe_contours.time.values), 
+                           levels=contours[1:], cmap='Reds', norm=norm, vmin=0, vmax=max(contours), linewidths=1.5, transform=proj_ref)
+    print(im_swishe.levels)
+
+    cax = ax.inset_axes([1.05, 0, 0.03, 1])
+    colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax)
+    colorbar.set_label('% of time with TC', labelpad=15, rotation=270)
