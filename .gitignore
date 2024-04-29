@@ -1,3 +1,5 @@
+*.zip
+*.gz*
 *.doc*
 *.csv
 *.xls*
@@ -10,3 +12,5 @@
 *.o
 *.mod
 *CM2.5.x
+*.inc
+*.tex
