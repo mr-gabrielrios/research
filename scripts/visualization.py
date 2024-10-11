@@ -242,7 +242,7 @@ def field_properties(field):
         return field, '-'
 
 def planar_composite(data, model_names, intensity_bin, field, pressure_level, 
-                     experiment_plots=['control', 'swishe'], track_data=None, weighting_intensity_metric=None,
+                     experiments=None, track_data=None, weighting_intensity_metric=None,
                      contour_levels=16, dpi=96, lon_nudge=0, lat_nudge=0, 
                      rotation=True, inline_statistics=False, subplot_format='circular', plot_style='contourf', diagnostic=False):
     """
@@ -261,33 +261,29 @@ def planar_composite(data, model_names, intensity_bin, field, pressure_level,
     """
  
     # Determine which experiments to evaluate; define a difference plot if 2 experiment names provided
-    if len(experiment_plots) == 3:
+    if len(experiments) == 2:
         # Define control and experiment names (assume both are in the density dictionary)
-        run_control, run_experiment, run_difference = experiment_plots[0], experiment_plots[1], experiment_plots[2]
+        run_control, run_experiment = experiments[0], experiments[1]
+        run_difference = '{0}-{1}'.format(run_experiment, run_control)
         # Define experiment list
-        experiments = [run_control, run_experiment, run_difference] if '-' in ''.join(experiment_plots) else experiment_plots
-    else:
-        run_difference = None
-        experiments = experiment_plots
+        experiments = [run_control, run_experiment, run_difference]
         
     ''' Generate composites. '''
+    # Initialize counter dictionary to hold data statistics for each model and corresponding experiment
+    counts = {model_name: {run_control: {}, run_experiment: {}} for model_name in model_names}
     # Iterate over the models provided in the dictionary
     for model in model_names:
         # Iterate over the experiments provided in the dictionary
         for experiment in data[model].keys():
-            print('\t Processing experiment: {0}'.format(experiment))
+            print('[visualization.py, planar_composite()] Processing model {0}, experiment: {1}'.format(model, experiment))
             # Create subdictionaries for prescribed intensity bins
             data[model][experiment]['composite'] = None
             # Determine experiments to undergo weighting
-            composite_mean, counts = composite.compositor_preprocessor(model, data[model][experiment]['data'], intensity_bin=intensity_bin, field=field, 
+            composite_mean, counts[model][experiment] = composite.compositor_preprocessor(model, data[model][experiment]['data'], intensity_bin=intensity_bin, field=field, 
                                                                         pressure_level=pressure_level, compositing_mode='planar', track_data=track_data, weighting_intensity_metric='min_slp')
-            # composite_samples = np.sum([sv for k, v in counts.items() for sk, sv in v.items()])
-            print(counts)
-            
-            # print('\t {0} records found for {1}, {2}, {3}'.format(composite_samples, model, experiment, intensity_bin))
             # Populate the dictionaries for the given intensity bin, correct for factors or signs before loading
             data[model][experiment]['composite'] = utilities.field_correction(data=composite_mean, field=field)
-
+            
     # Collect composites. Note: the differences will be calculated after this loop series.
     # Note: composite dictionary is structured top-down as: (1) intensity bin, (2) model, (3) experiment
     composites = {}
@@ -300,594 +296,113 @@ def planar_composite(data, model_names, intensity_bin, field, pressure_level,
             composites[model][experiment] = data[model][experiment]['composite']
                 
     # Pass 2: Iterate through experiments to get the differences if a difference plot type (anything with a subtraction, or '-', is detected in the "experiment_plots" argument)
-    run_control, run_experiment = experiments[0], experiments[1]
-    if '-' in ''.join(experiment_plots):
-        for model in composites.keys():
-            try:
-                # Get raw difference (this is done the brute force way due to artificial xArray mismatches despite proper dimension alignment)
-                delta = composites[model][run_experiment].values - composites[model][run_control].values
-                # Populate the dictionary with reconstructed xArray
-                composites[model][run_difference] = xr.DataArray(data=delta, dims=['grid_yt', 'grid_xt'],
-                                                                            coords={'grid_yt': (['grid_yt'], 
-                                                                                                composites[model][run_control]['grid_yt'].values), 
-                                                                                    'grid_xt': (['grid_xt'], 
-                                                                                                composites[model][run_control]['grid_xt'].values)})
-            except:
-                # Get raw difference (this is done the brute force way due to artificial xArray mismatches despite proper dimension alignment)
-                # Methodology: trim to common centers of data. In other words, find the smaller composite and trim the bigger one to their dimensions.
-                # Note: I wrote this stoned, so it can likely be optimized
+    for model in composites.keys():
+        try:
+            # Get raw difference (this is done the brute force way due to artificial xArray mismatches despite proper dimension alignment)
+            delta = composites[model][run_experiment].values - composites[model][run_control].values
+            # Populate the dictionary with reconstructed xArray
+            composites[model][run_difference] = xr.DataArray(data=delta, dims=['grid_yt', 'grid_xt'],
+                                                                        coords={'grid_yt': (['grid_yt'], 
+                                                                                            composites[model][run_control]['grid_yt'].values), 
+                                                                                'grid_xt': (['grid_xt'], 
+                                                                                            composites[model][run_control]['grid_xt'].values)})
+        except:
+            # Get raw difference (this is done the brute force way due to artificial xArray mismatches despite proper dimension alignment)
+            # Methodology: trim to common centers of data. In other words, find the smaller composite and trim the bigger one to their dimensions.
+            # Note: I wrote this stoned, so it can likely be optimized
+            
+            # Get shape
+            shape_control, shape_exp = composites[model][run_control].shape, composites[model][run_experiment].shape
+            # Round decimal places for the coordinates (floating point precision errors lead to weird indexing)
+            composites[model][run_control]['grid_xt'] = composites[model][run_control]['grid_xt'].round(3)
+            composites[model][run_control]['grid_yt'] = composites[model][run_control]['grid_yt'].round(3)
+            composites[model][run_experiment]['grid_xt'] = composites[model][run_experiment]['grid_xt'].round(3)
+            composites[model][run_experiment]['grid_yt'] = composites[model][run_experiment]['grid_yt'].round(3)
+            
+            # Compare latitudes:
+            if shape_control[0] < shape_exp[0]:
+                temp = composites[model][run_experiment].where((composites[model][run_experiment]['grid_yt'] >= composites[model][run_control]['grid_yt'].min())
+                                                                            & (composites[model][run_experiment]['grid_yt'] <= composites[model][run_control]['grid_yt'].max()), drop=True)
+                del composites[model][run_experiment]
+                composites[model][run_experiment] = temp
+            else:
+                temp = composites[model][run_control].where((composites[model][run_control]['grid_yt'] >= composites[model][run_experiment]['grid_yt'].min())
+                                                                            & (composites[model][run_control]['grid_yt'] <= composites[model][run_experiment]['grid_yt'].max()), drop=True)
+                del composites[model][run_control]
+                composites[model][run_control] = temp
+            # now longitudes
+            if shape_control[1] < shape_exp[1]:
+                temp = composites[model][run_experiment].where((composites[model][run_experiment]['grid_xt'] >= composites[model][run_control]['grid_xt'].min())
+                                                                            & (composites[model][run_experiment]['grid_xt'] <= composites[model][run_control]['grid_xt'].max()), drop=True)
+                del composites[model][run_experiment]
+                composites[model][run_experiment] = temp
+            else:
+                temp = composites[model][run_control].where((composites[model][run_control]['grid_xt'] >= composites[model][run_experiment]['grid_xt'].min())
+                                                                            & (composites[model][run_control]['grid_xt'] <= composites[model][run_experiment]['grid_xt'].max()), drop=True)
+                del composites[model][run_control]
+                composites[model][run_control] = temp
+            # Crude fix written when I was stoned, but it worked
+            x_, y_ = composites[model][run_control].values, composites[model][run_experiment].values
+            if x_.shape == y_.shape:
+                delta = y_ - x_
+                grid_xt = composites[model][run_control]['grid_xt'].values
+                grid_yt = composites[model][run_control]['grid_yt'].values
+            else:
+                pass
+                print('[visualization.py, planar_composite()] intake: sample A shape = {0}; sample B shape = {1}'.format(x_.shape, y_.shape))
+                if x_.shape[0] > y_.shape[0]:
+                    print('[visualization.py, planar_composite()] sample A y-axis > sample B y-axis')
+                    # if first sample's y-axis is larger
+                    x_ = np.vstack((np.full((1, x_.shape[1]), np.nan), x_[:y_.shape[0], :], np.full((1, x_.shape[1]), np.nan)))
+                    grid_yt = np.concatenate(([composites[model][run_experiment].grid_yt.values[0]], composites[model][run_control].grid_yt.values, [composites[model][run_experiment].grid_yt.values[-1]]))
+                elif y_.shape[0] > x_.shape[0]: 
+                    print('[visualization.py, planar_composite()] sample B y-axis > sample A y-axis')
+                    # if second sample's x-axis is larger
+                    y_ = y_[:x_.shape[0], :]
+                    grid_yt = composites[model][run_experiment].grid_yt.values[:x_.shape[0]]
+                    # y_ = np.vstack((np.full((1, y_.shape[1]), np.nan), y_[:x_.shape[0], :], np.full((1, y_.shape[1]), np.nan)))
+                    # grid_yt = np.concatenate(([composites[model][run_control].grid_yt.values[0]], composites[model][run_experiment].grid_yt.values, [composites[model][run_control].grid_yt.values[-1]]))
+                else:
+                    grid_yt = composites[model][run_control].grid_yt.values
+                print('[visualization.py, planar_composite()] post y-axis filtering: sample A shape = {0}; sample B shape = {1}'.format(x_.shape, y_.shape))
                 
-                # Get shape
-                shape_control, shape_exp = composites[model][run_control].shape, composites[model][run_experiment].shape
-                # Round decimal places for the coordinates (floating point precision errors lead to weird indexing)
-                composites[model][run_control]['grid_xt'] = composites[model][run_control]['grid_xt'].round(3)
-                composites[model][run_control]['grid_yt'] = composites[model][run_control]['grid_yt'].round(3)
-                composites[model][run_experiment]['grid_xt'] = composites[model][run_experiment]['grid_xt'].round(3)
-                composites[model][run_experiment]['grid_yt'] = composites[model][run_experiment]['grid_yt'].round(3)
-                
-                # Compare latitudes:
-                if shape_control[0] < shape_exp[0]:
-                    temp = composites[model][run_experiment].where((composites[model][run_experiment]['grid_yt'] >= composites[model][run_control]['grid_yt'].min())
-                                                                                & (composites[model][run_experiment]['grid_yt'] <= composites[model][run_control]['grid_yt'].max()), drop=True)
-                    del composites[model][run_experiment]
-                    composites[model][run_experiment] = temp
+                if x_.shape[1] < y_.shape[1]:
+                    print('[visualization.py, planar_composite()] sample A y-axis > sample B y-axis')
+                    # if first sample's y-axis is larger
+                    x_ = np.hstack((np.full((x_.shape[0], 1), np.nan), x_[:, :y_.shape[1]], np.full((x_.shape[0], 1), np.nan)))
+                    grid_xt = np.concatenate(([composites[model][run_experiment].grid_xt.values[0]], composites[model][run_control].grid_xt.values, [composites[model][run_experiment].grid_xt.values[-1]]))
+                elif x_.shape[1] > y_.shape[1]:
+                    print('[visualization.py, planar_composite()] sample A y-axis > sample B y-axis')
+                    # if second sample's y-axis is larger
+                    y_ = np.vstack((np.full((y_.shape[0], 1), np.nan), y_[:, :x_.shape[1]], np.full((y_.shape[0], 1), np.nan)))
+                    grid_xt = np.concatenate(([composites[model][run_control].grid_xt.values[0]], composites[model][run_experiment].grid_xt.values, [composites[model][run_control].grid_xt.values[-1]]))
                 else:
-                    temp = composites[model][run_control].where((composites[model][run_control]['grid_yt'] >= composites[model][run_experiment]['grid_yt'].min())
-                                                                                & (composites[model][run_control]['grid_yt'] <= composites[model][run_experiment]['grid_yt'].max()), drop=True)
-                    del composites[model][run_control]
-                    composites[model][run_control] = temp
-                # now longitudes
-                if shape_control[1] < shape_exp[1]:
-                    temp = composites[model][run_experiment].where((composites[model][run_experiment]['grid_xt'] >= composites[model][run_control]['grid_xt'].min())
-                                                                                & (composites[model][run_experiment]['grid_xt'] <= composites[model][run_control]['grid_xt'].max()), drop=True)
-                    del composites[model][run_experiment]
-                    composites[model][run_experiment] = temp
-                else:
-                    temp = composites[model][run_control].where((composites[model][run_control]['grid_xt'] >= composites[model][run_experiment]['grid_xt'].min())
-                                                                                & (composites[model][run_control]['grid_xt'] <= composites[model][run_experiment]['grid_xt'].max()), drop=True)
-                    del composites[model][run_control]
-                    composites[model][run_control] = temp
-                # Crude fix written when I was stoned, but it worked
-                x_, y_ = composites[model][run_control].values, composites[model][run_experiment].values
-                if x_.shape == y_.shape:
-                    delta = y_ - x_
-                    grid_xt = composites[model][run_control]['grid_xt'].values
-                    grid_yt = composites[model][run_control]['grid_yt'].values
-                else:
-                    pass
-                    print('[visualization.py, planar_composite()] intake: sample A shape = {0}; sample B shape = {1}'.format(x_.shape, y_.shape))
-                    if x_.shape[0] > y_.shape[0]:
-                        print('[visualization.py, planar_composite()] sample A y-axis > sample B y-axis')
-                        # if first sample's y-axis is larger
-                        x_ = np.vstack((np.full((1, x_.shape[1]), np.nan), x_[:y_.shape[0], :], np.full((1, x_.shape[1]), np.nan)))
-                        grid_yt = np.concatenate(([composites[model][run_experiment].grid_yt.values[0]], composites[model][run_control].grid_yt.values, [composites[model][run_experiment].grid_yt.values[-1]]))
-                    elif y_.shape[0] > x_.shape[0]: 
-                        print('[visualization.py, planar_composite()] sample B y-axis > sample A y-axis')
-                        # if second sample's x-axis is larger
-                        y_ = y_[:x_.shape[0], :]
-                        grid_yt = composites[model][run_experiment].grid_yt.values[:x_.shape[0]]
-                        # y_ = np.vstack((np.full((1, y_.shape[1]), np.nan), y_[:x_.shape[0], :], np.full((1, y_.shape[1]), np.nan)))
-                        # grid_yt = np.concatenate(([composites[model][run_control].grid_yt.values[0]], composites[model][run_experiment].grid_yt.values, [composites[model][run_control].grid_yt.values[-1]]))
-                    else:
-                        grid_yt = composites[model][run_control].grid_yt.values
-                    print('[visualization.py, planar_composite()] post y-axis filtering: sample A shape = {0}; sample B shape = {1}'.format(x_.shape, y_.shape))
+                    grid_xt = composites[model][run_control].grid_xt.values
+                print('[visualization.py, planar_composite()] post x-axis filtering: sample A shape = {0}; sample B shape = {1}'.format(x_.shape, y_.shape))
                     
-                    if x_.shape[1] < y_.shape[1]:
-                        print('[visualization.py, planar_composite()] sample A y-axis > sample B y-axis')
-                        # if first sample's y-axis is larger
-                        x_ = np.hstack((np.full((x_.shape[0], 1), np.nan), x_[:, :y_.shape[1]], np.full((x_.shape[0], 1), np.nan)))
-                        grid_xt = np.concatenate(([composites[model][run_experiment].grid_xt.values[0]], composites[model][run_control].grid_xt.values, [composites[model][run_experiment].grid_xt.values[-1]]))
-                    elif x_.shape[1] > y_.shape[1]:
-                        print('[visualization.py, planar_composite()] sample A y-axis > sample B y-axis')
-                        # if second sample's y-axis is larger
-                        y_ = np.vstack((np.full((y_.shape[0], 1), np.nan), y_[:, :x_.shape[1]], np.full((y_.shape[0], 1), np.nan)))
-                        grid_xt = np.concatenate(([composites[model][run_control].grid_xt.values[0]], composites[model][run_experiment].grid_xt.values, [composites[model][run_control].grid_xt.values[-1]]))
-                    else:
-                        grid_xt = composites[model][run_control].grid_xt.values
-                    print('[visualization.py, planar_composite()] post x-axis filtering: sample A shape = {0}; sample B shape = {1}'.format(x_.shape, y_.shape))
-                        
-                    if x_.shape != y_.shape:
-                        continue
-                    else:
-                        delta = y_ - x_
-                
-                # Populate the dictionary with reconstructed xArray
-                composites[model][run_difference] = xr.DataArray(data=delta, dims=['grid_yt', 'grid_xt'],
+                if x_.shape != y_.shape:
+                    continue
+                else:
+                    delta = y_ - x_
+            
+            # Populate the dictionary with reconstructed xArray
+            composites[model][run_difference] = xr.DataArray(data=delta, dims=['grid_yt', 'grid_xt'],
                                                                                     coords={'grid_yt': (['grid_yt'], grid_yt), 
                                                                                             'grid_xt': (['grid_xt'], grid_xt)})
              
-    # ''' Get normalizations and colormaps. '''
-    # # Initialize normalization and colormaps. Normalizations will be intensity_bin specific. Save into dictionary for future use in colorbars.
-    # norms = {intensity_bin: {experiment: None for experiment in experiments} for intensity_bin in intensity_bins}
-    # # Initialize colormap for use in colorbars
-    # cmaps = {intensity_bin: {experiment: None for experiment in experiments} for intensity_bin in intensity_bins}
+    return composites, counts
     
-    # bounds = contour_levels # number of levels to bin for the normalization
-    # # Iterate over intensity bins to populate norms. Perform this over all prescribed experiments per intensity bin.
-    # for intensity_bin in intensity_bins:
-    #     ''' Normalization #1: raw data. '''
-    #     # Initialize minimum and maximum values
-    #     vmin, vmax = np.nan, np.nan
-    #     # Iterate over each experiment
-    #     for experiment_plot in experiments:
-    #         if not run_difference or experiment_plot != run_difference:
-    #             # Find extrema for this experiment
-    #             # Use +/- 1-sigma from the mean for MSE-related fields due to large range for variance
-    #             if field in ['vi_h', 'h']:
-    #                 vmin_, vmax_ = [min([np.nanmean(sv) - np.nanstd(sv) for k, v in composites.items() for sk, sv in v.items() if sk in [run_control, run_experiment]]),
-    #                                 max([np.nanmean(sv) + np.nanstd(sv) for k, v in composites.items() for sk, sv in v.items() if sk in [run_control, run_experiment]])]
-    #             else:
-    #                 vmin_, vmax_ = [min([np.nanmin(sv) for k, v in composites.items() for sk, sv in v.items() if sk in [run_control, run_experiment]]),
-    #                                 max([np.nanmax(sv) for k, v in composites.items() for sk, sv in v.items() if sk in [run_control, run_experiment]])]
-    #             # If the extrema are larger than their corresponding extrema, update
-    #             vmin, vmax = vmin_ if (vmin_ <= np.nanmin([vmin, vmin_])) else vmin, vmax_ if (vmax_ > np.nanmax([vmax, 0])) else vmax
-    #     # Get rid of small negative values (order of 1e-5)
-    #     vmin, vmax = np.around(vmin, 3), np.around(vmax, 3)
-    #     # Subdivide normalization into sequential (all one sign) or diverging (two signs, including 0) bins
-    #     if vmin < 0 and vmax > 0:
-    #         # Get larger of the two bounds
-    #         extremum = max([abs(vmin), abs(vmax)])
-    #     else:
-    #         norm, cmap = norm_cmap(0, field, num_bounds=contour_levels, extrema=(vmin, vmax), diagnostic=diagnostic)
-        
-    #     # Assign to normalization dictionary
-    #     for experiment in experiments:
-    #         if not run_difference or experiment != run_difference:
-    #             norm, cmap = norm_cmap(0, field, num_bounds=contour_levels, extrema=(vmin, vmax), diagnostic=diagnostic)
-    #             norms[experiment] = norm
-    #             cmaps[experiment] = diverging_colormap_adjust(norm, cmap, additional=1) if vmin < 0 and vmax > 0 else cmap
-    #         else:
-    #             # Find extrema for this experiment
-    #             vmin, vmax = [min([np.nanmin(sv) for k, v in composites.items() for sk, sv in v.items() if sk == run_difference]),
-    #                           max([np.nanmax(sv) for k, v in composites.items() for sk, sv in v.items() if sk == run_difference])]
-    #             # Subdivide normalization into sequential (all one sign) or diverging (two signs, including 0) bins
-    #             if vmin < 0 and vmax > 0:
-    #                 # Get larger of the two bounds
-    #                 extremum = max([abs(vmin), abs(vmax)])
-    #                 bins = np.concatenate([np.linspace(-extremum, 0, int(bounds/2))[:-1], [0], np.linspace(0, extremum, int(bounds/2))[1:]])
-    #             else:
-    #                 bins = np.linspace(vmin, vmax, bounds+1)
-    #             # Assign to normalization dictionary
-    #             norm, cmap = norm_cmap(0, field, num_bounds=contour_levels, extrema=(vmin, vmax), diagnostic=diagnostic)
-    #             norms[run_difference] = norm
-    #             if vmin < 0 and vmax > 0:
-    #                 cmaps[run_difference] = diverging_colormap_adjust(norm, cmap, additional=1)
-    #             else:
-    #                 cmaps[run_difference] = cmap
-                           
-    # ''' Begin plotting. '''
-    # # Note: number of rows is dictated by number of models (+1 for rows), 
-    # #       number of columns is dictated by number of intensity bins TIMES the number of experiments desired to be plotted.
-    # nrows, ncols = len(model_names) + 1, len(experiment_plots)*len(intensity_bins)
-    # # Define height ratios as a function of the number of models
-    # height_ratios = [1 if row != nrows-1 else 0.1 for row in range(0, nrows)]
-    # # Initialize figure and grid. Note that nrows-1 is used to ignore the colorbar height.
-    # fig, grid = [plt.figure(figsize=(2*ncols, 2.5*(nrows-1)), constrained_layout=True, dpi=dpi), 
-    #              matplotlib.gridspec.GridSpec(nrows=nrows, ncols=ncols, height_ratios=height_ratios)]
-    # # Letter list
-    # # Iterate over intensity bins (columns)
-    # for intensity_bin_index, intensity_bin in enumerate(composites.keys()):
-    #     # Iterate over models (rows)
-    #     for model_index, model_name in enumerate(composites.keys()):
-    #         # Go through each desired experiment plot
-    #         for experiment_index, experiment_plot in enumerate(experiment_plots):
-    #             # Plot data
-    #             ax = fig.add_subplot(grid[model_index, intensity_bin_index + experiment_index])
-    #             if subplot_format == 'circular':
-    #                 ax = circular_subplot(fig, ax, 
-    #                                       data=composites[model_name][experiment_plot],
-    #                                       norm=norms[experiment_plot], cmap=cmaps[experiment_plot], plot_style=plot_style)
-    #                 # Annotation color
-    #                 label_color = 'k'
-    #                 # Annotation position
-    #                 annotation_xy = (0, 1)
-    #             else:
-    #                 if plot_style == 'pcolormesh':
-    #                     im = ax.pcolormesh(composites[model_name][experiment_plot].grid_xt + lon_nudge, 
-    #                                     composites[model_name][experiment_plot].grid_yt + lat_nudge, 
-    #                                     composites[model_name][experiment_plot], 
-    #                                     norm=norms[experiment_plot], cmap=cmaps[experiment_plot])
-    #                 else:
-    #                     im = ax.contourf(composites[model_name][experiment_plot].grid_xt + lon_nudge, 
-    #                                     composites[model_name][experiment_plot].grid_yt + lat_nudge, 
-    #                                     composites[model_name][experiment_plot], 
-    #                                     norm=norms[experiment_plot], cmap=cmaps[experiment_plot])
-    #                 # Tick formatting
-    #                 # Strategy: place minor ticks at 1-degree intervals, but make sure upper and lower limits are integers
-    #                 dx, dy = 1, 1
-    #                 x_min, x_max = composites[model_name][experiment_plot].grid_xt.min(), composites[model_name][experiment_plot].grid_xt.max()
-    #                 y_min, y_max = composites[model_name][experiment_plot].grid_yt.min(), composites[model_name][experiment_plot].grid_yt.max()
-    #                 gridline_x_minor, gridline_y_minor = np.arange(np.floor(x_min), np.floor(x_max), 1), np.arange(np.floor(y_min), np.floor(y_max), 1)
-    #                 ax.xaxis.set_minor_locator(matplotlib.ticker.FixedLocator(gridline_x_minor))
-    #                 ax.yaxis.set_minor_locator(matplotlib.ticker.FixedLocator(gridline_y_minor))
-    #                 # Modify axis aspect ratio
-    #                 ax.set_aspect('equal')
-    #                 ax.set_xlim([-10, 10])
-    #                 ax.set_ylim([-10, 10])
-    #                 # Tick positioning: move xticks to top and hide if not the first row
-    #                 ax.xaxis.tick_top()
-    #                 ax.yaxis.tick_right()
-    #                 if model_index != 0:
-    #                     ax.set_xticklabels([])
-    #                 # Tick positioning: move yticks to right and hide if not the last column
-    #                 if (intensity_bin_index + experiment_index) != ncols-1:
-    #                     ax.set_yticklabels([])
-    #                 # Annotation color
-    #                 label_color = 'white' if ((field in ['olr', 'h', 'h_anom', 'wind']) and (experiment_plot != run_difference)) else 'k'
-    #                 # Annotation position
-    #                 annotation_xy = (0.05, 0.95)
-                        
-    #             # Subplot labeling - only label first rows
-    #             # Change for publication to hide the composite mean or standard deviation
-    #             if '-' in experiment_plot:
-    #                 in_plot_stat = ''
-    #             else:
-    #                 in_plot_stats = {'min': np.nanmin(composites[model_name][experiment_plot]), 
-    #                                  'mean': np.nanmean(composites[model_name][experiment_plot]), 
-    #                                  'max': np.nanmax(composites[model_name][experiment_plot]), 
-    #                                  'sum': np.nansum(composites[model_name][experiment_plot])}
-    #                 # Get the order of magnitude (oom) of the extremum, use the reciprocal to determine number of decimal points
-    #                 oom = np.ceil(np.log10(1/in_plot_stats['mean']))
-    #                 if oom < -3 or oom > 3: # for small values
-    #                     in_plot_stat = '{0:.2e};\n({1:.3e}, {2:.3e});\n{3:.3e}'.format(in_plot_stats['mean'], in_plot_stats['min'], in_plot_stats['max'], in_plot_stats['sum']) 
-    #                 else: # other
-    #                     in_plot_stat = '{0:.2f};\n({1:.2f}, {2:.2f});\n{3:.2f}'.format(in_plot_stats['mean'], in_plot_stats['min'], in_plot_stats['max'], in_plot_stats['sum'])
-    #             # Modify label color depending on darkness of the field for raw fields only, not difference plots
-                
-    #             ax.annotate('({0})'.format(chr(ord('a') + intensity_bin_index + experiment_index)), 
-    #                         xy=annotation_xy, xycoords='axes fraction', fontsize=9, color=label_color, alpha=1, **{'va': 'top'})
-    #             if inline_statistics:
-    #                 stroke_color = 'k' if label_color == 'white' else 'white'
-    #                 ax.annotate('{0}'.format(in_plot_stat), xy=(0.05, 0.05), xycoords='axes fraction', 
-    #                             fontsize=6, color=label_color, alpha=1, 
-    #                             path_effects=[pe.Stroke(linewidth=1, foreground=stroke_color), pe.Normal()], 
-    #                             **{'va': 'bottom'})
-                
-                
-    #             # Labeling: column operations for intensity bin
-    #             if (intensity_bin_index + experiment_index) == 0:
-    #                 # Add label for the model on the first column
-    #                 ax.set_ylabel(model_name, fontsize=10, labelpad=10)
-    #             # Labeling: row operations for model name
-    #             if experiment_index == 0:
-    #                 print('y-label with {0} should print...'.format(model_name))
-    #                 ax.annotate('{0}'.format(model_name), (-0.1, 0.5), rotation=90,
-    #                             va='center', ha='right', xycoords='axes fraction', fontsize=10)
-    #             if model_index == 0:
-    #                 # Hide tick labels as necessary (if not on last column or first row, hide them)
-    #                 ax.xaxis.tick_top()
-    #                 # Add label for the intensity bin on the first row
-    #                 title_y = 1.25
-    #                 # Only label intensities if there is more than one intensity bin
-    #                 if len(intensity_bins) > 1:
-    #                     ax.annotate('{0}'.format(intensity_bin), (0.5, title_y), rotation=0,
-    #                                 va='baseline', ha='center', xycoords='axes fraction', fontsize=10)
-                        
-                         
-    # ''' Create colorbars.'''
-    # # Note that because normalizations are intensity bin specific, three colorbars will be made.
-    # # Colorbar ticklabel formatter
-    # # Limit colorbar label print to 1 print to avoid repetition
-    # label_index = False
-    # # Iterate over intensity bins and create colorbars
-    # for intensity_bin_index, intensity_bin in enumerate(composites.keys()):
-    #     for experiment_index, experiment in enumerate(experiment_plots):
-    #         # Build the colorbar
-    #         cw = fig.add_subplot(grid[-1, experiment_index]) # 'cw' stands for 'cax_wrapper'
-    #         cw.set_axis_off()
-    #         cax = cw.inset_axes([0, 1, 1, 0.5])
-    #         colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norms[experiment], cmaps[experiment]), 
-    #                                 orientation='horizontal', cax=cax, format=matplotlib.ticker.ScalarFormatter())
-    #         # Colorbar tick scientific notation formatting (see the ScalarFormatterForceFormat() class)
-    #         fmt = ScalarFormatterForceFormat()
-    #         fmt.set_powerlimits((-2, 3))
-    #         cax.xaxis.set_major_formatter(fmt)
-    #         # Modify font size of ticklabels
-    #         cax.tick_params(labelsize=8)
-    #         # Hide every other ticklabel
-    #         [l.set_visible(False) for (i, l) in enumerate(cax.xaxis.get_ticklabels()) if i % 2 != 0]
-    #         # Create colorbar label
-    #         long_name, units = field_properties(field)
-    #         vertical_level = ' at {0} hPa'.format(pressure_level) if pressure_level else ''
-    #         # Limit printing to the center subplot if 3 experiment plots are requested, else print on every subplot
-    #         if len(experiment_plots) == 3 and experiment_index == 1:
-    #             colorbar.set_label('[{1}]'.format(long_name, units, vertical_level), labelpad=10)
-    #         elif len(experiment_plots) != 3:
-    #             colorbar.set_label('[{1}]'.format(long_name, units, vertical_level), labelpad=10)
-            
-    # # Universal plot labels
-    # if subplot_format == 'circular':
-    #     fig.supxlabel('{0}{1}'.format(long_name, vertical_level), y=1, fontsize=10, va='bottom')
-    # else:
-    #     # Create colorbar label
-    #     long_name, units = field_properties(field)
-    #     vertical_level = ' at {0} hPa'.format(pressure_level) if pressure_level else ''
-    #     fig.supylabel('{0}{1}'.format(long_name, vertical_level), x=1, rotation=270, fontsize=10)
-
-    return composites
-  
-def azimuthal_composite_1d(data, model_names, field, pressure_level=None, experiments=['CTL1990s', 'CTL1990s_swishe'], dpi=96, diagnostic=False):
+def azimuthal_composite(data, model_names, field, intensity_bin=None, pressure_level=None, experiments=['CTL1990s', 'CTL1990s_swishe'], 
+                        track_data=None, weighting_intensity_metric=None, dpi=96, parallel=False, diagnostic=False):
     
-    def rolling_mean(a, window=3):
-        ret = np.cumsum(a, dtype=float)
-        ret[window:] = ret[window:] - ret[:-window]
-        return ret[window - 1:] / window
-    
-    # Define experiment names
-    run_control, run_experiment = experiments[0], experiments[1]
-    # Get differences
-    run_difference = '{1}-{0}'.format(run_control, run_experiment)
-    # Initialize counter dictionary to hold data statistics for each model and corresponding experiment
-    counts = {model_name: {run_control: {}, run_experiment: {}} for model_name in model_names}
-    
-    # Multiplication factor for precipitation and evaporation
-    factor = 3600 if field in ['precip', 'evap'] else 1
-    
-    # Initialize dictionary to hold processed data for each model and corresponding experiment
-    individual_storms = {model_name: {run_control: {}, run_experiment: {}} for model_name in model_names}
-    # Iterate over each model and experiment to get the azimuthal means for a given field
-    for model in individual_storms.keys():
-        for experiment in individual_storms[model].keys():
-            if diagnostic:
-                print('[visualization.py, azimuthal_composite_1d()] Compositing for model {0}, configuration {1}, for field {2}...'.format(model, experiment, field))
-            individual_storms[model][experiment] = composite.azimuthal_compositor(model, data[model][experiment]['data'], field, pressure_level=pressure_level)
-
-    # Initialize dictionary to hold composite data
-    outputs = {}
-    # Outer radial index size
-    index_ro = 20
-    # Iterate over each model and experiment to populate the array that will be averaged to get the azimuthal composite mean
-    for model in individual_storms.keys():
-        outputs[model] = {}
-        for experiment in individual_storms[model].keys():
-            # Initialize an array with pre-defined dimensions characteristic of TCs to be composited
-            # Dimensions are [0]: radius and [1]: number of storms
-            if diagnostic:
-                print('Processing: ', model, experiment, field)
-            outputs[model][experiment] = np.full((index_ro, len(individual_storms[model][run_control])), np.nan)
-            # For each individual storm, ensure that the DataArray populates some fraction of the initialized nan array
-            for i, value in enumerate(individual_storms[model][experiment]):
-                # Trim data radially, if needed
-                if value.values.shape[0] > index_ro:
-                    arr = value.values[:index_ro]
-                else:
-                    arr = value.values
-                outputs[model][experiment][0:arr.shape[0], i] = arr
-            # Get number of entries that are being averaged
-            counts[model][experiment] = outputs[model][experiment].shape[1]
-            # Get mean and standard deviations with respect to axis 1: number of storms
-            outputs[model][experiment] = {'mean': xr.DataArray(dims=['radius'], coords={'radius': (['radius'], np.arange(0, index_ro*0.9375, 0.9375))},
-                                                               data=np.nanmean(outputs[model][experiment], axis=1)),
-                                          'std': xr.DataArray(dims=['radius'], coords={'radius': (['radius'], np.arange(0, index_ro*0.9375, 0.9375))},
-                                                              data=np.nanstd(outputs[model][experiment], axis=1))}
-                
-        outputs[model][run_difference] = {}
-        for subfield in outputs[model][run_control].keys():
-            counts[model][run_difference] = counts[model][run_control]
-            outputs[model][run_difference][subfield] = outputs[model][run_experiment][subfield] - outputs[model][run_control][subfield]
-
-    # Outer radial index
-    index_ro = 15
-
-    ''' Filled field normalization. '''
-    # Get extrema for each model run 
-
-    ''' Plot. '''
-    nrows, ncols = len(outputs.keys()), 2
-
-    fig, gs = [plt.figure(figsize=(7, 2*nrows), constrained_layout=True, dpi=dpi), 
-               matplotlib.gridspec.GridSpec(nrows=nrows, ncols=ncols, wspace=0.25, hspace=0.1)]
-    linecolors = ['b', 'r']
-    
-    # Initialize axes dictionary
-    axes = {}
-    # Initialize extrema to be assigned during plotting
-    vmin, vmax = np.nan, np.nan
-    # Collect composited values
-    composite_values = {}
-    for model_index, model_name in enumerate(outputs.keys()):
-        ax = fig.add_subplot(gs[model_index, 0])
-        composite_values[model_name] = {}
-        for experiment_index, experiment_name in enumerate([run_control, run_experiment]):
-            
-            linecolor = cycler(experiment_index)['c']
-            
-            ''' Derive interpolated radial and field values. '''
-            # Define a radial bin width (in degrees)
-            bin_width = 0.5
-            # Determine the interpolation factor (this determines number of "subiradii", the higher the factor, the more interpolated radial values)
-            interpolation_factor = 2
-            # Determine the radial width of the window (in degrees) for rolling means
-            window_degree_width = 2
-            # Define radial values
-            radii = outputs[model_name][experiment_name]['mean'].radius.values
-            # Get index width of rolling window, assuming an average radial increment
-            mean_radial_increment = sp.stats.mode(np.diff(radii))[0]
-            print(mean_radial_increment)
-            window_index_width = round(window_degree_width / mean_radial_increment)
-            print('[visualization.py, azimuthal_composite_1d()] average radial increment: {0}, window indexing width for a {1}-degree window: {2}'.format(mean_radial_increment, window_degree_width, window_index_width))
-            # Define interpolated radial values
-            interpolation_radii = np.arange(np.nanmin(radii), 
-                                            np.nanmax(radii) + bin_width / interpolation_factor, 
-                                            bin_width / interpolation_factor)
-            # Interpolate the values to the interpolated bin locations
-            interpolated_values = np.interp(interpolation_radii, radii, outputs[model_name][experiment_name]['mean'])
-            # Redefine bins for the rolling mean
-            print(window_index_width//2)
-            interpolation_radii_rolling = interpolation_radii[:-1]
-            # Apply a rolling mean (centered) to the densities
-            interpolated_values_rolling = rolling_mean(interpolated_values, window_index_width) * factor
-            
-            # Plot data. Ensure the label only gets printed for the first plot to avoid repetition.
-            label = experiment_name
-            im = ax.plot(interpolation_radii_rolling, interpolated_values_rolling, lw=3, color=linecolor, label=label)
-            # Modify y-axis to fit data maxima
-            ax.set_xlim([0, 10])
-            
-            ax.legend(loc='best', frameon=False)
-            ax.xaxis.set_minor_locator(matplotlib.ticker.FixedLocator(np.arange(0, outputs[model_name][experiment_name]['mean'][:index_ro].radius.max(), 0.5)))
-
-            # Labeling: column operations for intensity bin
-            if experiment_index == 0:
-                # Add label for the model on the first column
-                ax.set_ylabel(model_name, fontsize=10, labelpad=10)
-            if model_index < nrows-1:
-                ax.set_xticklabels([])
-                
-            composite_values[model_name][experiment_name] = {'radii': interpolation_radii_rolling,
-                                                             'values': interpolated_values_rolling}
-            axes[model_index] = {'0': ax}
-            
-    ''' Difference plotting. '''
-             
-    vmin, vmax = np.nan, np.nan   
-    for model_index, model_name in enumerate(outputs.keys()):
-        for experiment_index, experiment_name in enumerate([run_difference]):
-            
-            composite_values[model_name][experiment_name] = {'radii': composite_values[model_name][run_control]['radii'],
-                                                             'values': composite_values[model_name][run_experiment]['values'] - composite_values[model_name][run_control]['values']}
-            
-            ax = fig.add_subplot(gs[model_index, -1])
-            ax.axhline(0, c='k', lw=1, alpha=0.5)
-            
-            im = ax.plot(composite_values[model_name][experiment_name]['radii'], composite_values[model_name][experiment_name]['values'], lw=3, color='k')
-            
-            # ax.set_title('{0}, N = {1}'.format(experiment_name, counts[model_name][experiment_name]), fontsize=10)
-            ax.set_xlim([0, 10])
-            ax.xaxis.set_minor_locator(matplotlib.ticker.FixedLocator(np.arange(0, outputs[model_name][experiment_name]['mean'][:index_ro].radius.max(), 0.5)))
-
-            if model_index < nrows-1:
-                ax.set_xticklabels([])
-            axes[model_index] = {'1': ax}
-            
-    fig.tight_layout()
-    
-def azimuthal_averaging_safe(models, individual_storms, fields, outer_radius_index=20, diagnostic=False):
-                    
-    outputs = {}
-    
-    for model in models:
-        run_control, run_experiment = list(individual_storms[model].keys())
-        run_difference = '{1}-{0}'.format(run_control, run_experiment)
-        outputs[model] = {}
-        for experiment in individual_storms[model].keys():
-        # Initialize an array with pre-defined dimensions characteristic of TCs to be composited
-        # Dimensions are [0]: pfull (pressure level) and [1]: radius and [2]: number of storms
-            outputs[model][experiment] = {}
-            for field in fields:
-                print('[visualization.py, azimuthal_composite_2d()] Processing: ', model, experiment, field)
-                outputs[model][experiment][field] = np.full((32, outer_radius_index, len(individual_storms[model][experiment][field])), np.nan)
-                # For each individual storm, ensure that the DataArray populates some fraction of the initialized nan array
-                for i, value in enumerate(individual_storms[model][experiment][field]):
-                    # Ensure dimensions are properly oriented
-                    v = value.transpose('pfull', 'radius')
-                    # Trim data radially, if needed
-                    if v.values.shape[1] > outer_radius_index:
-                        arr = v.values[:, :outer_radius_index]
-                    else:
-                        arr = v.values
-                    if diagnostic:
-                        print('[visualization.py, azimuthal_composite_2d()]  entry index: {0}; entry shape: {1}; container shape: {2}'.format(i, arr.shape, outputs[model][experiment][field].shape))
-                    outputs[model][experiment][field][:, 0:arr.shape[1], i] = arr
-                # Get mean and standard deviations with respect to axis 2: number of storms
-                outputs[model][experiment][field] = {'mean': xr.DataArray(dims=['pfull', 'radius'],
-                                                                            coords={'pfull': (['pfull'], v.pfull.values),
-                                                                                    'radius': (['radius'], np.arange(0, outer_radius_index*0.9375, 0.9375))},
-                                                                            data=np.nanmean(outputs[model][experiment][field], axis=2)),
-                                                        'std': xr.DataArray(dims=['pfull', 'radius'],
-                                                                            coords={'pfull': (['pfull'], v.pfull.values),
-                                                                                    'radius': (['radius'], np.arange(0, outer_radius_index*0.9375, 0.9375))},
-                                                                            data=np.nanstd(outputs[model][experiment][field], axis=2))}
-        
-        # Get differences
-        outputs[model][run_difference] = {}
-        for field in fields:
-            outputs[model][run_difference][field] = {}
-            for subfield in outputs[model][run_control][field].keys():
-                outputs[model][run_difference][field][subfield] = outputs[model][run_experiment][field][subfield] - outputs[model][run_control][field][subfield]
-
-    return outputs
-
-def azimuthal_averaging(individual_storms, model, field, outer_radius_index=20, diagnostic=False):
-    
-    outputs = {model: {}}
-    
-    run_control, run_experiment = list(individual_storms[model].keys())
-    run_difference = '{1}-{0}'.format(run_control, run_experiment)
-    
-    for experiment in individual_storms[model].keys():
-        print('[visualization.py, azimuthal_averaging()] Processing: ', model, experiment, field)
-        outputs[model][experiment] = {field: np.full((32, outer_radius_index, len(individual_storms[model][experiment][field])), np.nan)}
-        # For each individual storm, ensure that the DataArray populates some fraction of the initialized nan array
-        for i, value in enumerate(individual_storms[model][experiment][field]):
-            # Ensure dimensions are properly oriented
-            v = value.transpose('pfull', 'radius')
-            # Trim data radially, if needed
-            if v.values.shape[1] > outer_radius_index:
-                arr = v.values[:, :outer_radius_index]
-            else:
-                arr = v.values
-            if diagnostic:
-                print('[visualization.py, azimuthal_composite_2d()]  entry index: {0}; entry shape: {1}; container shape: {2}'.format(i, arr.shape, outputs[model][experiment][field].shape))
-            outputs[model][experiment][field][:, 0:arr.shape[1], i] = arr
-        # Get mean and standard deviations with respect to axis 2: number of storms
-        outputs[model][experiment][field] = {'mean': xr.DataArray(dims=['pfull', 'radius'],
-                                                                    coords={'pfull': (['pfull'], v.pfull.values),
-                                                                            'radius': (['radius'], np.arange(0, outer_radius_index*0.9375, 0.9375))},
-                                                                    data=np.nanmean(outputs[model][experiment][field], axis=2)),
-                                                'std': xr.DataArray(dims=['pfull', 'radius'],
-                                                                    coords={'pfull': (['pfull'], v.pfull.values),
-                                                                            'radius': (['radius'], np.arange(0, outer_radius_index*0.9375, 0.9375))},
-                                                                    data=np.nanstd(outputs[model][experiment][field], axis=2))}
-    # Get difference between experiments
-    outputs[model][run_difference] = {field: {}}
-    for subfield in outputs[model][run_control][field].keys():
-        outputs[model][run_difference][field][subfield] = outputs[model][run_experiment][field][subfield] - outputs[model][run_control][field][subfield]
-
-    return outputs
-
-def azimuthal_averaging_wrapper(individual_storms, models, fields, outer_radius_index=20, diagnostic=False):
-                
-    inputs = []    
-    outputs = {}
-    
-    for field in fields:
-        for model in models:
-            inputs.append([individual_storms, model, field, outer_radius_index, diagnostic])
-    
-    # Use 16 processors to calculate azimuthal means in parallel
-    max_procs = 16
-    num_procs = len(inputs) if len(inputs) < max_procs else max_procs
-    print('[composite.py, pproc()] Processing in parallel over {0} processors'.format(num_procs))
-    with multiprocessing.get_context("spawn").Pool(num_procs) as p:
-        output_list = [result for result in p.starmap(azimuthal_averaging, inputs)]
-    
-    for output in output_list:
-        output_models = list(set(list(output.keys())))
-        for output_model in output_models:
-            if output_model not in outputs.keys():
-                print(output_model)
-                outputs[output_model] = {}
-            output_experiments = list(output[output_model].keys())
-            for output_experiment in output_experiments:
-                if output_experiment not in outputs[output_model].keys():
-                    print(output_experiment)
-                    outputs[output_model][output_experiment] = {}
-                output_fields = list(output[output_model][output_experiment].keys())
-                for output_field in output_fields:
-                    if output_field not in output[output_model][output_experiment].keys():
-                        print(output_field)
-                        outputs[output_model][output_experiment][output_field] = {}
-                    outputs[output_model][output_experiment][output_field] = output[output_model][output_experiment][output_field]
-                
-    return outputs
-
-def azimuthal_composite_2d(data, model_names, fields, intensity_bin=None, pressure_level=None, experiments=['CTL1990s', 'CTL1990s_swishe'], 
-                           track_data=None, weighting_intensity_metric=None, dpi=96, parallel=False, diagnostic=False):
-    
+    # Define experiment names as variables
     run_control, run_experiment = experiments
     run_difference = '{1}-{0}'.format(run_control, run_experiment)
     
+    if not weighting_intensity_metric:
+        print('[visualization.py, azimuthal_composite_2d()] Default weighting intensity metric being defined.')
+        weighting_intensity_metric = 'min_slp'
+    
     # Initialize counter dictionary to hold data statistics for each model and corresponding experiment
     counts = {model_name: {run_control: {}, run_experiment: {}} for model_name in model_names}
     
@@ -896,25 +411,374 @@ def azimuthal_composite_2d(data, model_names, fields, intensity_bin=None, pressu
     # Iterate over each model and experiment to get the azimuthal means for a given field
     for model in individual_storms.keys():
         for experiment in individual_storms[model].keys():
-            for field in fields:
-                print('[visualization.py, azimuthal_composite_2d()] Iterating over model {0} for experiment {1} on field {2}'.format(model, experiment, field))
-                individual_storms[model][experiment][field], counts[model][experiment] = composite.compositor_preprocessor(model, data[model][experiment]['data'], intensity_bin, field, pressure_level=pressure_level, 
-                                                                                                                           compositing_mode='azimuthal', track_data=track_data, weighting_intensity_metric='min_slp')
-                # individual_storms[model][experiment][field], counts[model][experiment] = composite.azimuthal_compositor(model, data[model][experiment]['data'], field=field,
-                #                                                                                                         intensity_bin=intensity_bin, pressure_level=pressure_level,
-                #                                                                                                         track_data=track_data, weighting_intensity_metric=weighting_intensity_metric, parallel=parallel)
-                
-    # outputs = azimuthal_averaging_safe(model_names, individual_storms, fields, outer_radius_index=20, diagnostic=False)
-    # outputs = azimuthal_averaging_wrapper(individual_storms, model_names, fields)
-    outputs = individual_storms.copy()
-    
+            print('[visualization.py, azimuthal_composite_2d()] Iterating over model {0} for experiment {1}'.format(model, experiment))
+            individual_storms[model][experiment], counts[model][experiment] = composite.compositor_preprocessor(model, data[model][experiment]['data'], intensity_bin, field, pressure_level=pressure_level,
+                                                                                                                        compositing_mode='azimuthal', track_data=track_data, weighting_intensity_metric=weighting_intensity_metric)
+            # Populate the dictionaries for the given intensity bin, correct for factors or signs before loading
+            individual_storms[model][experiment] = utilities.field_correction(data=individual_storms[model][experiment], field=field)   
     for model in individual_storms.keys():
-        individual_storms[model][run_difference] = {}
-        for field in fields:
-            individual_storms[model][run_difference][field] = individual_storms[model][run_control][field] - individual_storms[model][run_experiment][field]
+        individual_storms[model][run_difference] = individual_storms[model][run_experiment] - individual_storms[model][run_control]
     
     return individual_storms, counts
             
+def line_plot_interpolator(X, Y, interpolation_factor=10):
+
+    # Remove nans and infs (note that the value array will have missing values)
+    X, Y = X[np.isfinite(Y)], Y[np.isfinite(Y)]
+    # Get new basis array with 'interpolation_factor' times as many points
+    X_interp = np.linspace(X.min(), X.max(), len(X)*interpolation_factor)
+    # Interpolate values using a BSpline
+    spl = sp.interpolate.make_interp_spline(X, Y, k=3)
+    Y_interp = spl(X_interp)
+
+    return X_interp, Y_interp
+
+def contour_tracing_levels(im, norm, diverging_mask_width=1, diagnostic=False):
+    
+    # Perform adjustment to remove white-masked values from the contours
+    if np.sign(min(norm.boundaries)) != np.sign(max(norm.boundaries)):
+        # Find index in levels where the value is 0
+        center_index = np.nanmin(np.argwhere(im.levels == 0))
+        # Redefine levels based on the zero-index and the width of the diverging white mask
+        # This allows the new contour levels to identically trace the filled contour levels
+        im_levels = np.concatenate([im.levels[0:(center_index - diverging_mask_width + 1)],
+                                    im.levels[(center_index + diverging_mask_width):]])
+        # Get normalization half-width
+        norm_halfwidth = int(len(norm.boundaries) // 2)
+        norm_mask_vmin = norm.boundaries[norm_halfwidth - diverging_mask_width]
+        norm_mask_vmax = norm.boundaries[norm_halfwidth + diverging_mask_width]
+        
+        # Remove levels from the new contour levels if they fall within the normalization mask extrema
+        im_levels = np.where((im_levels <= norm_mask_vmin) | (im_levels >= norm_mask_vmax), im_levels, np.nan)
+    else:
+        im_levels = norm.boundaries
+        
+    return im_levels
+
+def subplot_statistics(arr, fig, ax, label_position_x=0.96, label_position_y=0.05, fontsize=7, text_color=None, text_offset=False):
+
+    # Get relevant data statistics
+    mean, std = np.nanmean(arr), np.nanstd(arr)
+    vmin, vmax = np.nanmin(arr), np.nanmax(arr)
+    
+    # Get order of magnitude from the mean
+    order_of_magnitude = np.floor(np.log10(mean))
+    # Define string formatter
+    formatter = '.2e' if abs(order_of_magnitude) > 3 else '.2f'
+    
+    # Define the string
+    statistics_str = '{1:{0}} $\pm$ {2:{0}}\nmin: {3:{0}}, max: {4:{0}}'.format(formatter, mean, std, vmin, vmax)
+    # Adjust text alignment based on position such that it aligns towards a corner
+    ha = 'left' if label_position_x < 0.5 else 'right'
+    va = 'bottom' if label_position_y < 0.5 else 'top'
+    # Define text color
+    text_color = 'k' if not text_color else text_color
+
+    # If a text offset is requested, do the following:
+    # 1. Plot a dummy text box with transparent text.
+    # 2. Get the height
+    # 3. Offset the vertical position by the text height
+    if text_offset:
+        # 1. Plot a dummy text box with transparent text.
+        ann = ax.annotate(statistics_str, xy=(label_position_x, label_position_y), xycoords='axes fraction',
+                          ha=ha, va=va, fontsize=fontsize, color=text_color, alpha=0)
+        # 2. Get the height relative to the axes fraction.
+        transform = ax.transAxes.inverted()
+        bounding_box = ann.get_window_extent(renderer=fig.canvas.get_renderer()).transformed(transform)
+        text_height = bounding_box.y1 - bounding_box.y0
+        direction_factor = -1 if va == 'top' else 1 # adjust direction of translation based on alignment
+        spacing_factor = 1.25 # multiplying factor for vertical padding
+        # 2.  Offset the vertical position by the text height
+        ann = ax.annotate(statistics_str, xy=(label_position_x, label_position_y + spacing_factor*direction_factor*text_height), 
+                          xycoords='axes fraction', ha=ha, va=va, fontsize=fontsize, color=text_color)
+        
+    # Else, just plot normally
+    else:
+        ann = ax.annotate(statistics_str, xy=(label_position_x, label_position_y), xycoords='axes fraction',
+                          ha=ha, va=va, fontsize=fontsize, color=text_color)
+    # White stroke on the text
+    ann.set_path_effects([matplotlib.patheffects.Stroke(linewidth=1, foreground='white'),
+                          matplotlib.patheffects.Normal()])
+
+    return ax
+
+def composite_tick_formatting(ax, plot_type, norm, nrows, ncols, row=None, col=None):
+
+    # Define axis limits
+    min_x, max_x = [0, 10] if 'azimuthal' in plot_type else [-10, 10]
+    if plot_type == 'planar':
+        min_y, max_y = [-10, 10]
+    elif plot_type == 'azimuthal_1D':
+        min_y, max_y = min(norm.boundaries), max(norm.boundaries)
+    else:
+        min_y, max_y = ax.get_ylim()
+
+    # Define tick intervals
+    tick_interval_x = 1
+    tick_interval_y = 1 if plot_type == 'planar' else 100
+
+    # Define tick locations
+    tick_locator_x = np.arange(min_x, max_x + tick_interval_x, tick_interval_x)
+    tick_locator_y = np.arange(min_y, max_y + tick_interval_y, tick_interval_y)
+    
+    # Set x-axis ticks
+    ax.set_xlim([min_x, max_x])
+    ticks_x = ax.set_xticks(tick_locator_x)
+    ax.xaxis.set_major_locator(matplotlib.ticker.AutoLocator())
+    ax.xaxis.set_minor_locator(matplotlib.ticker.AutoMinorLocator())
+    
+    # Set y-axis ticks
+    if plot_type in ['planar', 'azimuthal_2D']:
+        ax.set_ylim([min_y, max_y])
+        ticks_y = ax.set_yticks(tick_locator_y)
+        ax.yaxis.set_major_locator(matplotlib.ticker.AutoLocator())
+        ax.yaxis.set_minor_locator(matplotlib.ticker.AutoMinorLocator())
+    else:
+        ax.set_ylim([min_y, max_y])
+        ax.yaxis.set_major_locator(matplotlib.ticker.AutoLocator())
+        ax.yaxis.set_minor_locator(matplotlib.ticker.AutoMinorLocator())
+    # Reverse y-axis direction for a 2D azimuthal plot
+    if plot_type == 'azimuthal_2D':
+        ax.set_ylim(ax.get_ylim()[::-1])
+
+    ''' Control tick labeling locations. '''
+    
+    # Only plot tick labels on the top and right of a subplot
+    ax.xaxis.tick_bottom()
+    ax.yaxis.tick_left()
+        
+    # Hide tick labels if the subplot is not an edge case
+    # Only plot x-tick labels on the top row
+    if row != nrows - 1:
+        ax.set_xticklabels([])
+    # Only plot y-tick labels on the top row
+    if plot_type in ['planar', 'azimuthal_2D'] and col != 0:
+        ax.set_yticklabels([])
+
+    return ax
+
+def composite_colorbar(fig, axes, field, experiments, norms, cmaps):
+    
+    field_name, field_units = field_properties(field)
+    colorbar_offset_y = 1.1 # in units of axes fraction
+    colorbar_height = 0.075 # in units of axes fraction
+    
+    for experiment_index, experiment in enumerate(experiments):
+
+        ax = axes['{0}, {1}'.format(0, experiment_index)]
+        norm, cmap = norms[experiment], cmaps[experiment]
+
+        cax = ax.inset_axes([0, colorbar_offset_y + colorbar_height, 1, colorbar_height])
+        colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax, orientation='horizontal')
+
+        
+        cax.xaxis.set_major_locator(matplotlib.ticker.FixedLocator(norm.boundaries, 5))
+        cax.xaxis.set_label_position('top')
+        cax.xaxis.set_ticks_position('top')
+
+        # Change string formatting for tick notation (see the ScalarFormatterForceFormat() class)
+        fmt = ScalarFormatterForceFormat()
+        fmt.set_powerlimits((-2, 3))
+        cax.xaxis.set_major_formatter(fmt)
+        
+        if experiment_index == int(np.floor(len(experiments)/2)):
+            colorbar_label = '{0} [{1}]'.format(field_name, field_units)
+            colorbar.set_label(colorbar_label, ha='center', labelpad=10)
+
+        fig.canvas.draw()
+        offset = cax.xaxis.get_major_formatter().get_offset()
+        if len(offset) > 0:
+            cax.xaxis.get_offset_text().set_visible(False)
+            fontsize = cax.get_xticklabels()[0].get_fontsize()
+            cax.annotate(offset, (1, -0.5), xycoords='axes fraction', ha='right', va='top', fontsize=fontsize - 2)
+
+    return colorbar
+
+def composite_normalization_colormap(dataset, experiments_in=['CTL1990s', 'CTL1990s_swishe'], field='WVP', 
+                                     pressure_limits=None, contour_levels=16, diverging_mask_width=1, extremum_type='absolute', diagnostic=False):
+    
+    if pressure_limits:
+        pressure_bottom, pressure_top = max(pressure_limits), min(pressure_limits)
+    else:
+        pressure_bottom, pressure_top = 1000, 100
+        
+    model_names = dataset.keys()
+    run_control, run_experiment = experiments_in
+    experiments = [run_control, run_experiment]
+    difference_experiment = '{1}-{0}'.format(run_control, run_experiment)
+    
+    extrema = {'vmin': np.nan, 'vmax': np.nan}
+    difference_extrema = {'vmin': np.nan, 'vmax': np.nan}
+    
+    for model in dataset.keys():
+        for experiment in experiments:
+            # Define iterand dataset for convenience
+            arr = dataset[model][experiment]
+            # Slice vertically if the data has a vertical component
+            if 'pfull' in arr.dims:
+                if diagnostic:
+                    print('[composite_normalization_colormap()] Pressure selection being made.')
+                arr = arr.sel(pfull=slice(pressure_top, pressure_bottom))
+            # Get iterand dataset extrema
+            if extremum_type == 'absolute':
+                vmin, vmax = arr.min(), arr.max()
+            elif extremum_type == 'std':
+                num_deviations = 2
+                mean, std = np.nanmean(arr), np.nanstd(arr)
+                vmin, vmax = mean - num_deviations * std, mean + num_deviations * std
+            # Update extrema if the iterand extrema superseded it/them
+            extrema['vmin'] = vmin.item() if (np.isnan(extrema['vmin']) or vmin < extrema['vmin']) else extrema['vmin']
+            extrema['vmax'] = vmax.item() if (np.isnan(extrema['vmax']) or vmax > extrema['vmax']) else extrema['vmax']
+            if diagnostic:
+                print('Model: {0:6s}; experiment: {1:15s}; field: {2} | minimum value: {3:.2f}; maximum value: {4:.2f}'.format(model, experiment, field, vmin, vmax))
+    
+        # Define iterand dataset for convenience
+        arr = dataset[model][difference_experiment]
+        # Slice vertically if the data has a vertical component
+        if 'pfull' in arr:
+            arr = arr.sel(pfull=slice(pressure_top, pressure_bottom), method='nearest')
+        # Get iterand dataset extrema - use a standard deviation exceedance approach in case of anomalous values
+        mean, std = np.nanmean(arr), np.nanstd(arr)
+        num_deviations = 4
+        if std > num_deviations * mean:
+            vmin, vmax = mean - num_deviations * std, mean + num_deviations * std
+        else:
+            vmin, vmax = arr.min(), arr.max()
+        # Update extrema if the iterand extrema superseded it/them
+        difference_extrema['vmin'] = vmin.item() if (np.isnan(difference_extrema['vmin']) or vmin < difference_extrema['vmin']) else difference_extrema['vmin']
+        difference_extrema['vmax'] = vmax.item() if (np.isnan(difference_extrema['vmax']) or vmax > difference_extrema['vmax']) else difference_extrema['vmax']
+        
+        if diagnostic:
+            print('[difference] Model: {0:6s}; experiment: {1:15s}; field: {2} | minimum value: {3:.2f}; maximum value: {4:.2f}'.format(model, experiment, field, vmin, vmax))
+    
+    experiments.append(difference_experiment)
+    norms, cmaps = {}, {}
+    for model in dataset.keys():
+        for experiment in experiments:
+            extremum = extrema if experiment in experiments_in else difference_extrema
+            norms[experiment], cmaps[experiment] = norm_cmap(0, field=field, extrema=(extremum['vmin'], extremum['vmax']), num_bounds=contour_levels)
+
+            if diagnostic:
+                print('Model: {0:6s}; experiment: {1:15s}; field: {2} | normalization levels: {3}'.format(model, experiment, field, norms[experiment].boundaries))
+            
+            if min(norms[experiment].boundaries) < 0 and max(norms[experiment].boundaries) > 0:
+                cmaps[experiment] = diverging_colormap_adjust(norms[experiment], cmaps[experiment], additional=diverging_mask_width)
+
+    return norms, cmaps
+
+def composite_plot(dataset, models, experiments, field, plot_type, contour_levels=16, format='contour', grid_overlay=False, dpi=96, diagnostic=False):
+
+    # Define the width of the white masking for divergent data
+    diverging_mask_width = 1
+    # Get normalization and colormap data for the iterand data
+    norms, cmaps = composite_normalization_colormap(dataset, field=field, contour_levels=contour_levels, diverging_mask_width=diverging_mask_width)
+
+    # Set up basis vector names for plots
+    coordinates = {'planar': {'x': 'grid_xt', 'y': 'grid_yt'},
+                   'azimuthal_1D': {'x': 'radius'},
+                   'azimuthal_2D': {'x': 'radius', 'y': 'pfull'}}
+
+    # Define figure structure parameters
+    width_factor, height_factor = 3, 3
+    nrows, ncols = len(models), len(experiments)
+    if plot_type == 'azimuthal_1D':
+        ncols -= 1
+        width_factor += 1
+        height_factor -= 1
+    
+    fig, gs = [plt.figure(figsize=(width_factor*ncols, height_factor*nrows), dpi=dpi),
+               matplotlib.gridspec.GridSpec(nrows=nrows, ncols=ncols)]
+    axes = {}
+    
+    for model_index, model in enumerate(models):
+        for experiment_index, experiment in enumerate(experiments):
+
+            # Get iteration-specific plot properties for line plotting
+            cycle_properties = cycler(experiment_index)
+            linecolor = cycle_properties['c']
+            
+            # Boolean to determine whether the row/column combination has been used yet.
+            # This is needed to distinguish 1D from 2D plotting.
+            preplotted, text_color = False, None
+            
+            # Determine column index for grid structure. 
+            # Set to equal experiment_index if this is 2D, otherwise make it dependent on experiment type.
+            if plot_type in ['planar', 'azimuthal_2D']:
+                column_index = experiment_index 
+            else:
+                # This assumes that the difference experiment has a '-' in it
+                column_index = 0 if '-' not in experiment else 1
+                
+            # Define identifying name for the specific subplot
+            subplot_name = '{0}, {1}'.format(model_index, column_index)
+            # If the subplot exists, use it. If not, define it
+            if subplot_name not in axes.keys():
+                ax = fig.add_subplot(gs[model_index, column_index])
+            else:
+                ax = axes[subplot_name]
+                preplotted = True
+
+            # Define a shorthand for the iterand dataset
+            arr = dataset[model][experiment]
+            # Get normalization and colormap
+            norm, cmap = norms[experiment], cmaps[experiment]
+
+            # Handle 1D plotting
+            experiment_label = experiment if model_index == 0 else ''
+            # Get the x-basis vector
+            coordinate_x = coordinates[plot_type]['x'] 
+            # Handle 2D plotting
+            if plot_type in ['planar', 'azimuthal_2D']:
+                coordinate_y = coordinates[plot_type]['y']
+                if format == 'contour':
+                    im = ax.contourf(arr[coordinate_x], arr[coordinate_y], arr, norm=norm, cmap=cmap, levels=contour_levels)
+                    tracer_levels = contour_tracing_levels(im, norm, diverging_mask_width=diverging_mask_width, diagnostic=diagnostic)
+                    im_trace = ax.contour(arr[coordinate_x], arr[coordinate_y], arr, levels=tracer_levels, colors=['k'], alpha=0.25, linewidths=0.5)
+                else:
+                    im = ax.pcolormesh(arr[coordinate_x], arr[coordinate_y], arr, norm=norm, cmap=cmap)
+
+            elif plot_type == 'azimuthal_1D':
+
+                radius_interpolated, arr_interpolated = line_plot_interpolator(arr.radius, arr)
+                
+                im = ax.plot(radius_interpolated, arr_interpolated, linewidth=3, color=linecolor, label=experiment_label)
+                # Plot reference 0 line if the difference has different signs
+                if min(norm.boundaries) < 0 and max(norm.boundaries) > 0:
+                    ax.axhline(0, c='k', lw=1, zorder=0)
+                # Collect the text color for annotation
+                text_color = im[0].get_color()
+            
+            # Tick formatting. Note the boolean use to avoid overwriting.
+            if not preplotted:
+                ax = composite_tick_formatting(ax, plot_type, norm, nrows, ncols, row=model_index, col=experiment_index)
+
+            # Plot centerlines and set aspects equal if the requested plot is planar
+            if plot_type == 'planar':
+                ax.set_aspect('equal')
+                ax.axhline(0, color='k', alpha=0.25, linestyle='--', linewidth=0.5)
+                ax.axvline(0, color='k', alpha=0.25, linestyle='--', linewidth=0.5)            
+            # Create grid
+            if grid_overlay:
+                grid = ax.grid(color='k', alpha=0.25, linestyle='--', linewidth=0.5)
+            # Add inline statistics
+            ax = subplot_statistics(arr, fig, ax, text_color=text_color, text_offset=preplotted)
+            # Add subplot identifier
+            subplot_identifier = ax.annotate('({0})'.format(chr(ord('a') + len(axes))), 
+                                             xy=(0.04, 0.96), xycoords='axes fraction', 
+                                             fontsize=8, color='k', va='top', ha='left')
+            subplot_identifier.set_path_effects([matplotlib.patheffects.Stroke(linewidth=1, foreground='white'),
+                                                 matplotlib.patheffects.Normal()])
+            
+            # Append subplot to collection
+            axes[subplot_name] = ax
+
+    ''' Construct colorbars. '''
+    if plot_type in ['planar', 'azimuthal_2D']:
+        colorbar = composite_colorbar(fig, axes, field, experiments, norms, cmaps)
+    else:
+        fig.tight_layout()
+        fig.legend(ncols=len(experiments), bbox_to_anchor=[0.5, 1.05], loc='center', frameon=False)
+
 def density_grid(data, model_names=['HIRAM', 'AM2.5', 'FLOR'], experiments=['control', 'swishe'], difference_order='rtl', bin_resolution=5, dpi=96):
     """
     Method to plot the daily spatial density of all TC occurrences given a track data dictionary. 
