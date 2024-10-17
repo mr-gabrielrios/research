@@ -4,9 +4,201 @@ import matplotlib, matplotlib.pyplot as plt
 import numpy as np, pandas as pd, scipy as sp, xarray as xr
 import os, pickle, random
 
+import concurrent.futures
+import itertools
+
 import importlib
 import composite_weighting, rotate, utilities, visualization
 importlib.reload(composite_weighting)
+
+def azimuthal_composite(data, model_names, field, intensity_bin=None, pressure_level=None, experiments=['CTL1990s', 'CTL1990s_swishe'], 
+                        track_data=None, weighting_intensity_metric=None, dpi=96, parallel=False, diagnostic=False):
+    
+    # Define experiment names as variables
+    run_control, run_experiment = experiments
+    run_difference = '{1}-{0}'.format(run_control, run_experiment)
+    
+    if not weighting_intensity_metric:
+        print('[visualization.py, azimuthal_composite_2d()] Default weighting intensity metric being defined.')
+        weighting_intensity_metric = 'min_slp'
+    
+    # Initialize counter dictionary to hold data statistics for each model and corresponding experiment
+    counts = {model_name: {run_control: {}, run_experiment: {}} for model_name in model_names}
+    
+    # Initialize dictionary to hold processed data for each model and corresponding experiment
+    individual_storms = {model_name: {run_control: {}, run_experiment: {}} for model_name in model_names}
+    
+    # Iterate over each model and experiment to get the azimuthal means for a given field
+    for model in individual_storms.keys():
+        for experiment in individual_storms[model].keys():
+            print('[visualization.py, azimuthal_composite_2d()] Iterating over model {0} for experiment {1}'.format(model, experiment))
+            individual_storms[model][experiment], counts[model][experiment] = compositor_preprocessor(model, data[model][experiment]['data'], intensity_bin, field, pressure_level=pressure_level,
+                                                                                                      compositing_mode='azimuthal', track_data=track_data, weighting_intensity_metric=weighting_intensity_metric)
+            # Populate the dictionaries for the given intensity bin, correct for factors or signs before loading
+            individual_storms[model][experiment] = utilities.field_correction(data=individual_storms[model][experiment], field=field)   
+            
+    # Iterate over each model and experiment to get the azimuthal means for a given field
+    for model in individual_storms.keys():
+        for experiment in individual_storms[model].keys():        
+            # Populate the dictionaries for the given intensity bin, correct for factors or signs before loading
+            individual_storms[model][experiment] = utilities.field_correction(data=individual_storms[model][experiment], field=field)   
+    
+    
+    for model in individual_storms.keys():
+        individual_storms[model][run_difference] = individual_storms[model][run_experiment] - individual_storms[model][run_control]
+    
+    return individual_storms, counts
+
+def planar_composite(data, model_names, intensity_bin, field, pressure_level, 
+                     experiments=None, track_data=None, weighting_intensity_metric=None,
+                     contour_levels=16, dpi=96, lon_nudge=0, lat_nudge=0, 
+                     rotation=True, inline_statistics=False, subplot_format='circular', plot_style='contourf', diagnostic=False):
+    """
+    Method to obtain planar composite for prescribed data for a given field.
+    Note: input must be in the form of a 3-tiered dictionary that is the output of tc_analyis.tc_model_data().
+
+    Args:
+        data (dict): 3-tiered dictionary
+        model_names (list of str): list of strs with model names
+        intensity_bins (list of str): list of strs with intensity bin listings
+        field (str): name of field to evaluate
+        pressure_level (numeric): level at which to evaluate field
+        experiment_plot (str): experiment to plot (typically control, swishe, or swishe-control)
+        dpi (int): dots per inch - 96 is default, 300 is recommended for publication-quality
+        inline_statistics (bool): boolean to control wheether or not statistics are published in the figures
+    """
+ 
+    # Determine which experiments to evaluate; define a difference plot if 2 experiment names provided
+    if len(experiments) == 2:
+        # Define control and experiment names (assume both are in the density dictionary)
+        run_control, run_experiment = experiments[0], experiments[1]
+        run_difference = '{0}-{1}'.format(run_experiment, run_control)
+        # Define experiment list
+        experiments = [run_control, run_experiment, run_difference]
+        
+    ''' Generate composites. '''
+    # Initialize counter dictionary to hold data statistics for each model and corresponding experiment
+    counts = {model_name: {run_control: {}, run_experiment: {}} for model_name in model_names}
+    # Iterate over the models provided in the dictionary
+    for model in model_names:
+        # Iterate over the experiments provided in the dictionary
+        for experiment in data[model].keys():
+            print('[visualization.py, planar_composite()] Processing model {0}, experiment: {1}'.format(model, experiment))
+            # Create subdictionaries for prescribed intensity bins
+            data[model][experiment]['composite'] = None
+            # Determine experiments to undergo weighting
+            composite_mean, counts[model][experiment] = compositor_preprocessor(model, data[model][experiment]['data'], intensity_bin=intensity_bin, field=field,
+                                                                                pressure_level=pressure_level, compositing_mode='planar', track_data=track_data, weighting_intensity_metric='min_slp')
+            # Populate the dictionaries for the given intensity bin, correct for factors or signs before loading
+            data[model][experiment]['composite'] = utilities.field_correction(data=composite_mean, field=field)
+            
+    # Collect composites. Note: the differences will be calculated after this loop series.
+    # Note: composite dictionary is structured top-down as: (1) intensity bin, (2) model, (3) experiment
+    composites = {}
+    # Pass 1: Iterate through experiments to get each experiment's density data.
+    for model in model_names:
+        # Initialize subdictionary for the iterand model
+        composites[model] = {}
+        # Iterate over each given experiment
+        for experiment in data[model].keys():
+            composites[model][experiment] = data[model][experiment]['composite']
+                
+    # Pass 2: Iterate through experiments to get the differences if a difference plot type (anything with a subtraction, or '-', is detected in the "experiment_plots" argument)
+    for model in composites.keys():
+        try:
+            # Get raw difference (this is done the brute force way due to artificial xArray mismatches despite proper dimension alignment)
+            delta = composites[model][run_experiment].values - composites[model][run_control].values
+            # Populate the dictionary with reconstructed xArray
+            composites[model][run_difference] = xr.DataArray(data=delta, dims=['grid_yt', 'grid_xt'],
+                                                                        coords={'grid_yt': (['grid_yt'], 
+                                                                                            composites[model][run_control]['grid_yt'].values), 
+                                                                                'grid_xt': (['grid_xt'], 
+                                                                                            composites[model][run_control]['grid_xt'].values)})
+        except:
+            # Get raw difference (this is done the brute force way due to artificial xArray mismatches despite proper dimension alignment)
+            # Methodology: trim to common centers of data. In other words, find the smaller composite and trim the bigger one to their dimensions.
+            # Note: I wrote this stoned, so it can likely be optimized
+            
+            # Get shape
+            shape_control, shape_exp = composites[model][run_control].shape, composites[model][run_experiment].shape
+            # Round decimal places for the coordinates (floating point precision errors lead to weird indexing)
+            composites[model][run_control]['grid_xt'] = composites[model][run_control]['grid_xt'].round(3)
+            composites[model][run_control]['grid_yt'] = composites[model][run_control]['grid_yt'].round(3)
+            composites[model][run_experiment]['grid_xt'] = composites[model][run_experiment]['grid_xt'].round(3)
+            composites[model][run_experiment]['grid_yt'] = composites[model][run_experiment]['grid_yt'].round(3)
+            
+            # Compare latitudes:
+            if shape_control[0] < shape_exp[0]:
+                temp = composites[model][run_experiment].where((composites[model][run_experiment]['grid_yt'] >= composites[model][run_control]['grid_yt'].min())
+                                                                            & (composites[model][run_experiment]['grid_yt'] <= composites[model][run_control]['grid_yt'].max()), drop=True)
+                del composites[model][run_experiment]
+                composites[model][run_experiment] = temp
+            else:
+                temp = composites[model][run_control].where((composites[model][run_control]['grid_yt'] >= composites[model][run_experiment]['grid_yt'].min())
+                                                                            & (composites[model][run_control]['grid_yt'] <= composites[model][run_experiment]['grid_yt'].max()), drop=True)
+                del composites[model][run_control]
+                composites[model][run_control] = temp
+            # now longitudes
+            if shape_control[1] < shape_exp[1]:
+                temp = composites[model][run_experiment].where((composites[model][run_experiment]['grid_xt'] >= composites[model][run_control]['grid_xt'].min())
+                                                                            & (composites[model][run_experiment]['grid_xt'] <= composites[model][run_control]['grid_xt'].max()), drop=True)
+                del composites[model][run_experiment]
+                composites[model][run_experiment] = temp
+            else:
+                temp = composites[model][run_control].where((composites[model][run_control]['grid_xt'] >= composites[model][run_experiment]['grid_xt'].min())
+                                                                            & (composites[model][run_control]['grid_xt'] <= composites[model][run_experiment]['grid_xt'].max()), drop=True)
+                del composites[model][run_control]
+                composites[model][run_control] = temp
+            # Crude fix written when I was stoned, but it worked
+            x_, y_ = composites[model][run_control].values, composites[model][run_experiment].values
+            if x_.shape == y_.shape:
+                delta = y_ - x_
+                grid_xt = composites[model][run_control]['grid_xt'].values
+                grid_yt = composites[model][run_control]['grid_yt'].values
+            else:
+                pass
+                print('[visualization.py, planar_composite()] intake: sample A shape = {0}; sample B shape = {1}'.format(x_.shape, y_.shape))
+                if x_.shape[0] > y_.shape[0]:
+                    print('[visualization.py, planar_composite()] sample A y-axis > sample B y-axis')
+                    # if first sample's y-axis is larger
+                    x_ = np.vstack((np.full((1, x_.shape[1]), np.nan), x_[:y_.shape[0], :], np.full((1, x_.shape[1]), np.nan)))
+                    grid_yt = np.concatenate(([composites[model][run_experiment].grid_yt.values[0]], composites[model][run_control].grid_yt.values, [composites[model][run_experiment].grid_yt.values[-1]]))
+                elif y_.shape[0] > x_.shape[0]: 
+                    print('[visualization.py, planar_composite()] sample B y-axis > sample A y-axis')
+                    # if second sample's x-axis is larger
+                    y_ = y_[:x_.shape[0], :]
+                    grid_yt = composites[model][run_experiment].grid_yt.values[:x_.shape[0]]
+                    # y_ = np.vstack((np.full((1, y_.shape[1]), np.nan), y_[:x_.shape[0], :], np.full((1, y_.shape[1]), np.nan)))
+                    # grid_yt = np.concatenate(([composites[model][run_control].grid_yt.values[0]], composites[model][run_experiment].grid_yt.values, [composites[model][run_control].grid_yt.values[-1]]))
+                else:
+                    grid_yt = composites[model][run_control].grid_yt.values
+                print('[visualization.py, planar_composite()] post y-axis filtering: sample A shape = {0}; sample B shape = {1}'.format(x_.shape, y_.shape))
+                
+                if x_.shape[1] < y_.shape[1]:
+                    print('[visualization.py, planar_composite()] sample A y-axis > sample B y-axis')
+                    # if first sample's y-axis is larger
+                    x_ = np.hstack((np.full((x_.shape[0], 1), np.nan), x_[:, :y_.shape[1]], np.full((x_.shape[0], 1), np.nan)))
+                    grid_xt = np.concatenate(([composites[model][run_experiment].grid_xt.values[0]], composites[model][run_control].grid_xt.values, [composites[model][run_experiment].grid_xt.values[-1]]))
+                elif x_.shape[1] > y_.shape[1]:
+                    print('[visualization.py, planar_composite()] sample A y-axis > sample B y-axis')
+                    # if second sample's y-axis is larger
+                    y_ = np.vstack((np.full((y_.shape[0], 1), np.nan), y_[:, :x_.shape[1]], np.full((y_.shape[0], 1), np.nan)))
+                    grid_xt = np.concatenate(([composites[model][run_control].grid_xt.values[0]], composites[model][run_experiment].grid_xt.values, [composites[model][run_control].grid_xt.values[-1]]))
+                else:
+                    grid_xt = composites[model][run_control].grid_xt.values
+                print('[visualization.py, planar_composite()] post x-axis filtering: sample A shape = {0}; sample B shape = {1}'.format(x_.shape, y_.shape))
+                    
+                if x_.shape != y_.shape:
+                    continue
+                else:
+                    delta = y_ - x_
+            
+            # Populate the dictionary with reconstructed xArray
+            composites[model][run_difference] = xr.DataArray(data=delta, dims=['grid_yt', 'grid_xt'],
+                                                             coords={'grid_yt': (['grid_yt'], grid_yt),
+                                                                     'grid_xt': (['grid_xt'], grid_xt)})
+             
+    return composites, counts
         
 def azimuthal_processor(data, field='wind_tangential', pressure_level=None, visual_check=False, diagnostic=False):
     """
@@ -33,7 +225,7 @@ def azimuthal_processor(data, field='wind_tangential', pressure_level=None, visu
     '''
     
     if diagnostic:
-        print('[composite.py, azimuthal_compositor()] Azimuthally processing {0}...'.format(data['storm_id']))
+        print('[composite.py, azimuthal_compositor()] Azimuthally processing {0}...'.format(data.attrs['storm_ID']))
     
     # Clean nans from the input data, if any exist
     dataset = data.dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all') 
@@ -93,9 +285,12 @@ def azimuthal_processor(data, field='wind_tangential', pressure_level=None, visu
             r_i += resolution
 
         # 9. Create xArray DataArray for the composite
-        composite_azim = xr.DataArray(data=out, dims=('pfull', 'radius'), 
-                                    coords={'pfull': (['pfull'], dataset.pfull.values),
-                                            'radius': (['radius'], rs[:-1])})
+        composite_azim = xr.DataArray(data=out, 
+                                        dims=('pfull', 'radius'), 
+                                        coords={'pfull': (['pfull'], dataset.pfull.values),
+                                              'radius': (['radius'], rs[:-1])},
+                                        attrs={'storm_ID': dataset.attrs['storm_ID'],
+                                               'slp': dataset['slp'].min().values})
     else:
         if diagnostic:
             print('[composite.py, azimuthal_compositor()] 1D data (radial) being processed...')
@@ -131,6 +326,8 @@ def azimuthal_processor(data, field='wind_tangential', pressure_level=None, visu
             composite_azim.plot.contourf(levels=16, ax=ax, norm=norm, cmap=cmap)
             ax.set_ylim(ax.get_ylim()[::-1])
 
+    composite_azim['time'] = dataset['time']
+
     return composite_azim
 
 def compositor_preprocessor(model, datasets, intensity_bin, field, pressure_level=None, experiment_designator=False, rotation=False,
@@ -159,7 +356,7 @@ def compositor_preprocessor(model, datasets, intensity_bin, field, pressure_leve
     ################################################################################################################
     
     max_procs = 16
-    num_procs = len(datasets) if len(datasets) < max_procs else max_procs
+    num_procs = int(len(datasets)/4) if len(datasets) < max_procs else max_procs
     print('[composite.py, compositor_preprocessor()] Parallelizing on {0} processors...'.format(num_procs))
     # Prepare inputs for snapshot collection
     inputs = [[model, key, ds, field, pressure_level, intensity_bin, min_x, min_y, compositing_mode, track_data, weighting_intensity_metric, diagnostic]
@@ -197,13 +394,14 @@ def compositor_preprocessor(model, datasets, intensity_bin, field, pressure_leve
     # Create collection data structure for all outputs from the loop
     collection_keys = ['data', 'weighting_metadata', 'min_x', 'min_y']
     collection =  {k: {} for k in collection_keys}
+
     # Iterate over the outputs
     for entry in storm_data:
         for varname in collection_keys:
             collection[varname] = item_input(entry, varname, collection[varname])
             
     data, weighting_metadata, min_x, min_y = collection['data'], collection['weighting_metadata'], collection['min_x'], collection['min_y']
-    
+
     # Get minima for the longitude and latitude axes of the data
     min_x, min_y = np.nanmin(np.fromiter(min_x.values(), dtype=int)), np.nanmin(np.fromiter(min_y.values(), dtype=int))
     if diagnostic:
@@ -230,6 +428,8 @@ def compositor_preprocessor(model, datasets, intensity_bin, field, pressure_leve
         # If the experiment is considered an experiment rather than a control, invert the weights for better normalization
         if experiment_designator:
             weights = {k: 1/v for k, v in weights.items()}
+    else:
+        weighting_bins, weights = None, None
             
     # Initialize dictionary to hold weights based on entries
     storm_weights = {}
@@ -262,6 +462,7 @@ def compositor_preprocessor(model, datasets, intensity_bin, field, pressure_leve
     
     # Get number of samples being processed for the composite mean (this is pre-weighting, where sample counts get modified)
     sample_count = len(data)
+    print('Pre-weighting sample count: {0}'.format(sample_count))
     
     ''' End step 2. '''
 
@@ -282,17 +483,20 @@ def compositor_preprocessor(model, datasets, intensity_bin, field, pressure_leve
         storm_weight = storm_weights[k]
         # Round to nearest defined interval to determine number of repetitions for the entry
         storm_weight_rounded = 0.25 * round(storm_weight/0.25)
-        num_repetitions_rounded = round(storm_weight/0.25)
+        num_repetitions_rounded = int(storm_weight_rounded)
+        print('[composite.py, compositor_preprocessor()] Number of repetitions for {0}: {1}'.format(k, num_repetitions_rounded))
         if diagnostic:
             print('[composite.py, planar_compositor()] Number of repetitions: {0}, interval-rounded: {1}, and fully rounded: {2}'.format(storm_weight, storm_weight_rounded, num_repetitions_rounded))
         # This loop controls the number of times a sample is added to the stack
         for repetition in range(num_repetitions_rounded):
+            # v.attrs['snapshot_methodology'] = 
             snapshot_stack.append(v)
         
+    
     # Get composite mean of all provided snapshots in 'snapshot_stack'
     if compositing_mode == 'planar':
         composite_mean = planar_composite_mean(data, snapshot_stack, field)
-        return composite_mean, sample_count
+        return snapshot_stack, composite_mean, sample_count
     
     # Get azimuthal mean of all provided snapshots in 'snapshot_stack'
     elif compositing_mode == 'azimuthal':
@@ -303,7 +507,8 @@ def compositor_preprocessor(model, datasets, intensity_bin, field, pressure_leve
         with multiprocessing.get_context("spawn").Pool(num_procs) as p:
             snapshots = [result for result in p.starmap(azimuthal_processor, inputs)]
             composite_mean = azimuthal_composite_mean(snapshots, outer_radius_index=20, diagnostic=diagnostic)
-        return composite_mean, sample_count
+        
+        return snapshots, composite_mean, sample_count
     
     else:
         print('[composite.py, planar_compositor()] Compositing mode not recognized - this script only handles planar and azimuthal composites.')
@@ -380,7 +585,7 @@ def snapshot_collection(model, key, ds, field, pressure_level, intensity_bin, mi
             
         # Merge dictionary into an xArray Dataset
         dataset = xr.merge(dataset.values())
-    
+
     # If timestamps match, proceed. Else, continue.
     if len(dataset.time.values) > 0:
         if diagnostic:
@@ -398,11 +603,15 @@ def snapshot_collection(model, key, ds, field, pressure_level, intensity_bin, mi
         timestamps = [utilities.time_adjust(model, t, method='cftime_to_pandas') 
                         for t in dataset.time.values if not ((t.month == 2) & (t.day == 29))] 
         # Get strongest timestamp
-        timestamp_lmi = ds['track_output'].loc[ds['track_output']['time'].isin(timestamps)].sort_values('max_wind', ascending=False).iloc[0]['time'] 
+        timestamp_lmi = ds['track_output'].loc[ds['track_output']['time'].isin(timestamps)].sort_values('min_slp', ascending=True).iloc[0]['time'] 
         # Get the timestamps found from +/- n_days and revert to cftime for DataArray indexing
         timestamps = [utilities.time_adjust(model, t, method='pandas_to_cftime') for t in timestamps 
                         if abs(t - timestamp_lmi) <= pd.Timedelta(n_days, "d")]
         
+        if diagnostic:
+            print('[composite.py, snapshot_collection()] Storm ID: {0} ----------------------------------------\n', storm_id)
+            print('\t', ds['track_output'].loc[ds['track_output']['time'].isin(timestamps)][['time', 'min_slp', 'max_wind']])
+            print('\t Timestamp with LMI: ', timestamp_lmi)
         # Process data for each filtered timestamp
         for i, timestamp in enumerate(timestamps):   
             # Assign the storm sub-ID
@@ -426,7 +635,7 @@ def snapshot_collection(model, key, ds, field, pressure_level, intensity_bin, mi
             # Get aspect ratio of clipped GCM data - used to see if an entry has invalid dimensions
             storm_aspect_ratio = len(data[storm_subid][key].grid_xt) / len(data[storm_subid][key].grid_yt)
             # Check to see if data proportions are too far from unity (typical values range from 0.75 to 1.35). If so, drop it.
-            if storm_aspect_ratio < 0.5 or storm_aspect_ratio > 1.5:
+            if (storm_aspect_ratio < (1/1.5) or storm_aspect_ratio > 1.5) and compositing_mode == 'planar':
                 if diagnostic:
                     print('[composite.py, planar_compositor()] dimensions too skewed for this entry: {0} with shape {1}'.format(storm_subid, data[storm_subid][key][field].shape))
                 del data[storm_subid]
@@ -434,6 +643,8 @@ def snapshot_collection(model, key, ds, field, pressure_level, intensity_bin, mi
             # Log the extents in longitude (grid_xt) and latitude (grid_yt)
             min_x[storm_subid] = len(data[storm_subid][key].grid_xt)
             min_y[storm_subid] = len(data[storm_subid][key].grid_yt)
+            # Add storm ID to the dataset
+            data[storm_subid][key].attrs['storm_ID'] = storm_subid
     else:
         print('\t \t {0} was not processed since no timestamps were found...'.format(storm_id))
      
@@ -457,13 +668,15 @@ def snapshot_weight_trim(model, key, data, storm_id, field, pressure_level, inte
     min_x = min_x - 1 if min_x % 2 == 1 else min_x
     min_y = min_y - 1 if min_y % 2 == 1 else min_y
     # Get midpoints
-    center_x, center_y = len(data[storm_id][key].grid_xt) // 2, len(data[storm_id][key].grid_yt) // 2
+    center_x, center_y = int(len(data[storm_id][key].grid_xt) // 2), int(len(data[storm_id][key].grid_yt) // 2)
     # Define slices
     slice_x = slice(center_x - min_x//2 + buffer, center_x + min_x//2 - buffer)
     slice_y = slice(center_y - min_y//2 + buffer, center_y + min_y//2 - buffer)
     # Slice the domain
     data[storm_id][key] = data[storm_id][key].isel(grid_xt=slice_x, grid_yt=slice_y)
     
+    # Redefine midpoints for meridional position filtering
+    center_y = int(len(data[storm_id][key].grid_yt) // 2)
     # Latitude check - only use storms within 5 to 35 latitude
     if abs(data[storm_id][key]['center_lat']) > 35 or abs(data[storm_id][key]['center_lat']) < 5:
         print('[composite.py, snapshot_weight_trim()] Not using {0} due to TC center being too poleward at {1:.2f}.'.format(storm_id, data[storm_id][key]['center_lat'].values))
@@ -473,7 +686,7 @@ def snapshot_weight_trim(model, key, data, storm_id, field, pressure_level, inte
     # Flip the data about the x-axis if the center latitude is < 0 (for Southern Hemisphere storms).
     elif data[storm_id][key].isel(grid_yt=center_y)['grid_yt'] < 0:
         if NH_TCs:
-            print('\t \t Not using {0} due to TC being in the Southern Hemisphere at {1:.2f}.'.format(storm_id, data[storm_id][key].isel(grid_yt=center_y)['grid_yt']))
+            print('[composite.py, snapshot_weight_trim()] Not using {0} due to TC being in the Southern Hemisphere at {1:.2f}.'.format(storm_id, data[storm_id][key].isel(grid_yt=center_y)['grid_yt']))
             data[storm_id][key] = np.nan
             storm_weights[storm_id] = 0
         else:
@@ -487,13 +700,16 @@ def snapshot_weight_trim(model, key, data, storm_id, field, pressure_level, inte
     
     # Get intensity bin for the specific storm ID (find the bin that the storm ID intensity metric falls into)
     weighting_storm_id = storm_id.split('_')[0] if weighting_bins else 1
-    if diagnostic:
-        print('[composite.py, planar_compositor()] Weighting bins: {0}; storm-specific intensity: {1}'.format(weighting_bins, weighting_metadata[weighting_storm_id]))
+    # if diagnostic:
+    #     print('[composite.py, planar_compositor()] Weighting bins: {0}; storm-specific intensity: {1}'.format(weighting_bins, weighting_metadata[weighting_storm_id]))
     weighting_index = np.nanmax(np.flatnonzero(np.array(weighting_bins) < weighting_metadata[weighting_storm_id])) if weighting_bins else 1
     if diagnostic:
         print('[composite.py, planar_compositor()] Weights: {0}; Weighting index: {1}'.format(weights, weighting_index))
     # Use intensity-based weighting for each selected timestamp
-    storm_weights[storm_id] = list(weights.values())[weighting_index] if weighting_bins else 1
+    if weights:
+        storm_weights[storm_id] = list(weights.values())[weighting_index] if weighting_bins else 1
+    else:
+        storm_weights[storm_id] = 1
     
     # nan-out the storm weight if the data entry is invalid
     if 'float' in str(type(data[storm_id][key])):
@@ -552,15 +768,12 @@ def dataset_alignment(ds, subdict, field, times, pressure_level=None, index_time
             dataset[data_var] = dataset[data_var].interpolate_na(dim='grid_xt').interpolate_na(dim='grid_yt')
     
     ''' End planar-specific block of code. '''
-    
+
     return dataset
 
 def planar_composite_mean(data, snapshot_stack, key):
     
-    # print(snapshot_stack[0])
-    # print('-----------------------------------------------')
     snapshot_stack_key = [s[key] for s in snapshot_stack]
-    # print(snapshot_stack_key[0])
     
     # This is the compositing ~magic~, where the arrays get flattened into a 2D array of axes 'grid_xt' and 'grid_yt'
     composite_mean = np.nanmean(np.stack(snapshot_stack_key), axis=0)
@@ -630,3 +843,4 @@ def azimuthal_composite_mean(snapshots, outer_radius_index=20, diagnostic=False)
             
     else:
         print('[composite.py, azimuthal_composite_mean()] Dimensions not recognized and cannot be composited.')
+
