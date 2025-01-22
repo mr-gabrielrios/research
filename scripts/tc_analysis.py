@@ -429,19 +429,16 @@ def track_data_loading(models=['HIRAM', 'AM2.5', 'FLOR'], experiments=['CTL1990s
                 pickle.dump(track_data, handle,
                             protocol=pickle.HIGHEST_PROTOCOL)
 
-
 def TC_statistics(track_data: pd.DataFrame):
     
     ''' Helper function to append TC statistics (e.g., ACE, PDI, etc) to each storm. '''
     
-    # Append accumulated cyclone energy
-    ACE = track_data.groupby('storm_id').apply(lambda x: (x['max_wind']**2).sum())
-    ACE.name = 'ACE'
-    track_data = pd.merge(track_data, ACE, on='storm_id', suffixes=('_drop', ''))
-    # Append power dissipation index
-    PDI = track_data.groupby('storm_id').apply(lambda x: (x['max_wind']**3).sum())
-    PDI.name = 'PDI'
-    track_data = pd.merge(track_data, PDI, on='storm_id', suffixes=('_drop', ''))
+    # Append accumulated cyclone energy [m^2 s^-1]
+    # Method: get squared sum of each storm's maximum winds and multiply it by the duration (in days) and correct for units
+    track_data['ACE'] = track_data.groupby('storm_id').apply(lambda x: ((x['max_wind']**2).sum() * x['duration'] * 86400)).rename('ACE').reset_index(drop=True)
+    # Append power dissipation index [m^3 s^-2]
+    # Method: get cubed sum of each storm's maximum winds and multiply it by the duration (in days) and correct for units
+    track_data['PDI'] = track_data.groupby('storm_id').apply(lambda x: ((x['max_wind']**3).sum() * x['duration'] * 86400)).rename('PDI').reset_index(drop=True)
     
     return track_data
 
@@ -459,6 +456,9 @@ def describe(model_name: str,
     # Get intensity information
     storm_max_wind = track_data['raw'].groupby('storm_id')['max_wind'].max()
     storm_min_pressure = track_data['raw'].groupby('storm_id')['min_slp'].min()
+    # Get total run energy information
+    storm_ACE = track_data['raw'].groupby('storm_id')['ACE'].first()
+    storm_PDI = track_data['raw'].groupby('storm_id')['PDI'].first()
 
     print('-------------------------------------------------------------')
     print(f'Statistics for TCs in model: {
@@ -467,6 +467,7 @@ def describe(model_name: str,
     print(f'Storm duration: mean = {storm_duration.mean():.2f} +/- {storm_duration.std():.2f} days')
     print(f'Storm maximum winds: mean = {storm_max_wind.mean():.2f} +/- {storm_max_wind.std():.2f} m/s')
     print(f'Storm minimum pressure: mean = {storm_min_pressure.mean():.2f} +/- {storm_min_pressure.std():.2f} hPa')
+    print(f'Run-integrated global energy statistics: ACE = {storm_ACE.sum():.2e} m^2 s^-1; PDI = {storm_PDI.sum():.2e} m^3 s^-2')
     print('-------------------------------------------------------------\n')
 
 
