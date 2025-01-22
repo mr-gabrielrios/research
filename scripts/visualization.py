@@ -7,6 +7,7 @@ import scipy as sp
 import xarray as xr
 import matplotlib
 import matplotlib.pyplot as plt
+import time
 
 import utilities
 import tc_analysis
@@ -16,10 +17,34 @@ class ScalarFormatterForceFormat(matplotlib.ticker.ScalarFormatter):
     def _set_format(self):  # Override function that finds format to use.
         self.format = '%.3g' 
 
+def get_experiment_long_names(experiment_name: str) -> str:
+
+    ''' Helper function to attribute a more presentable name (known as a long name) to a given experiment name. '''
+
+    # Experiment name library
+    long_names = {'SWISHE': ['CTL1990s_swishe'],
+                  'CTL': ['CTL1990s']}
+    # Initialize output long name as none
+    experiment_long_name = None
+    # Iterate through dictionary to search for a key that contains the matching experiment
+    for long_name, experiment in long_names.items():
+        # Create boolean list to see if experiment name is in the given value list
+        # Note: the extra hyphen is used to avoid retrieving accidental subsets (for example, 'CTL1990s' is a subset of 'CTL1990s_swishe')
+        match_flags = [f'{experiment_name}-' in f'{name}-' for name in experiment]
+        # If a match is made, return the long name
+        if sum(match_flags) > 0:
+            experiment_long_name = long_name
+    
+    return experiment_long_name
+
+def rolling_mean(arr, dim, window_size=2.5):
+        rolling_window_size = round(window_size / arr.dim.diff(dim).values[0]) if dim in ['grid_xt', 'grid_yt'] else window_size
+        return arr.rolling({dim: rolling_window_size}, center=True).mean()
+
 def cycler(i):
     
     colors = ['b', 'g', 'r', 'm']
-    linestyles = ['-', ':', '--', '-.']
+    linestyles = ['-', '--', ':', '-.']
     property_dict = {'c': colors[i], 'ls': linestyles[i]}
     
     return property_dict
@@ -114,7 +139,7 @@ def diverging_colormap_adjust(norm, cmap, additional=0):
 
     return cmap
 
-def norm_cmap(data, field, num_bounds=16, extrema=None, white_adjust=False, cmap_white_fraction=0.1, diagnostic=False):
+def norm_cmap(data, field=None, num_bounds=16, extrema=None, white_adjust=False, cmap_white_fraction=0.1, diagnostic=False):
     """
     Method to derive normalization and colormap for a given list of numeric arrays and field.
 
@@ -122,7 +147,7 @@ def norm_cmap(data, field, num_bounds=16, extrema=None, white_adjust=False, cmap
         data (_type_): _description_
         field (_type_): _description_
     """
-    
+
     # Ensure data is a list 
     if type(data) is not list:
         # Handle dictionary case by extracting values
@@ -137,13 +162,23 @@ def norm_cmap(data, field, num_bounds=16, extrema=None, white_adjust=False, cmap
     if not extrema:
         # Iterate over each data item
         for item in data:
-            # Find extrema for this item
-            vmin_, vmax_ = np.nanmin(item), np.nanmax(item)
-            # If the extrema are larger than their corresponding extrema, update
-            vmin, vmax = [vmin_ if (vmin_ <= np.nanmin([vmin, vmin_])) else vmin, 
-                          vmax_ if (vmax_ > np.nanmax([vmax, 0])) else vmax]
-            vmin = vmin_ if np.isnan(vmin) else vmin
-            vmax = vmax_ if np.isnan(vmax) else vmax
+            if isinstance(item, xr.Dataset):
+                # Find extrema for this item
+                vmin_, vmax_ = min(item.min().values()).item(), max(item.max().values()).item()
+                # If the extrema are larger than their corresponding extrema, update
+                vmin, vmax = [vmin_ if (vmin_ <= np.nanmin([vmin, vmin_])) else vmin, 
+                            vmax_ if (vmax_ > np.nanmax([vmax, 0])) else vmax]
+                vmin = vmin_ if np.isnan(vmin) else vmin
+                vmax = vmax_ if np.isnan(vmax) else vmax
+            else:
+                # Find extrema for this item
+                vmin_, vmax_ = np.nanmin(item), np.nanmax(item)
+                # If the extrema are larger than their corresponding extrema, update
+                vmin, vmax = [vmin_ if (vmin_ <= np.nanmin([vmin, vmin_])) else vmin, 
+                            vmax_ if (vmax_ > np.nanmax([vmax, 0])) else vmax]
+                vmin = vmin_ if np.isnan(vmin) else vmin
+                vmax = vmax_ if np.isnan(vmax) else vmax
+
     else:
         # Define minimum and maximum values
         vmin, vmax = min(extrema), max(extrema)
@@ -181,7 +216,7 @@ def norm_cmap(data, field, num_bounds=16, extrema=None, white_adjust=False, cmap
     # Assign to normalization dictionary
     norm = matplotlib.colors.BoundaryNorm(bins, 256)
     # Get colormap
-    cmap = get_cmap(field, norm)
+    cmap = get_cmap(field, norm) if field else 'viridis'
     # If the colormap is a "white-to-color" sequential colormap, apply an adjustment for a white basis
     sequential_cmaps = ['Greys', 'Purples', 'Blues', 'Greens', 'Oranges', 'Reds','YlOrBr', 'YlOrRd', 'OrRd', 'PuRd', 
                         'RdPu', 'BuPu', 'GnBu', 'PuBu', 'YlGnBu', 'PuBuGn', 'BuGn', 'YlGn']
@@ -225,6 +260,7 @@ def field_properties(field):
                   'evap': {'long_name': 'evaporation', 'units': 'mm d$^{-1}$'},
                   'h_anom': {'long_name': 'domainwise MSE anomaly\n', 'units': 'J kg$^{-1}$'},
                   'temp': {'long_name': 'temperature', 'units': 'K'},
+                  't_surf': {'long_name': 'surface temperature', 'units': 'K'},
                   'temp_anom': {'long_name': 'domainwise temperature anomaly\n', 'units': 'K'},
                   'sphum_anom': {'long_name': 'domainwise specific humidity anomaly\n', 'units': 'kg kg$^{-1}$'},
                   'wind_tangential': {'long_name': 'tangential velocity', 'units': 'm s$^{-1}$'},
@@ -239,9 +275,11 @@ def field_properties(field):
                   'theta_e': {'long_name': '$\\theta_e$', 'units': 'K'},
                   'olr_clr': {'long_name': '$\\theta_e$', 'units': 'K'},
                   'theta_e': {'long_name': '$\\theta_e$', 'units': 'K'},
-                  'mld': {'long_name': 'mixed-layer depth', 'units': 'm'}}
+                  'mld': {'long_name': 'mixed-layer depth', 'units': 'm'},
+                  'q_atm': {'long_name': 'atmospheric heating', 'units': 'W m$^{-2}$'}}
 
-    properties[field]['long_name'] = properties[field]['long_name'] + long_name_addendum
+    if field in properties.keys():
+        properties[field]['long_name'] = properties[field]['long_name'] + long_name_addendum
     
     if field in properties.keys():
         return properties[field]['long_name'], properties[field]['units']
@@ -336,6 +374,8 @@ def subplot_statistics(arr, fig, ax, label_position_x=0.96, label_position_y=0.0
 
 def composite_tick_formatting(ax, plot_type, norm, nrows, ncols, row=None, col=None):
 
+    fontsize = {'ticklabel': 13}
+
     # Define axis limits
     if plot_type == 'planar':
         min_x, max_x = [-10, 10]
@@ -375,6 +415,9 @@ def composite_tick_formatting(ax, plot_type, norm, nrows, ncols, row=None, col=N
     if plot_type == 'azimuthal_2D':
         ax.set_ylim(ax.get_ylim()[::-1])
 
+    # Set tick fontsizes
+    ax.tick_params(axis='both', which='major', labelsize=fontsize['ticklabel'])
+    
     ''' Control tick labeling locations. '''
     
     # Only plot tick labels on the top and right of a subplot
@@ -392,6 +435,8 @@ def composite_tick_formatting(ax, plot_type, norm, nrows, ncols, row=None, col=N
     return ax
 
 def composite_colorbar(fig, axes, field, experiments, norms, cmaps):
+
+    fontsize = {'colorbar_label': 15}
     
     field_name, field_units = field_properties(field)
     colorbar_offset_y = 1.1 # in units of axes fraction
@@ -408,6 +453,7 @@ def composite_colorbar(fig, axes, field, experiments, norms, cmaps):
         cax.xaxis.set_major_locator(matplotlib.ticker.FixedLocator(norm.boundaries, 5))
         cax.xaxis.set_label_position('top')
         cax.xaxis.set_ticks_position('top')
+        cax.tick_params(axis='x', which='major', labelsize=12)
 
         # Change string formatting for tick notation (see the ScalarFormatterForceFormat() class)
         fmt = ScalarFormatterForceFormat()
@@ -416,14 +462,14 @@ def composite_colorbar(fig, axes, field, experiments, norms, cmaps):
         
         if experiment_index == int(np.floor(len(experiments)/2)):
             colorbar_label = '{0} [{1}]'.format(field_name, field_units)
-            colorbar.set_label(colorbar_label, ha='center', labelpad=10)
+            colorbar.set_label(colorbar_label, ha='center', labelpad=15, fontsize=fontsize['colorbar_label'])
 
         fig.canvas.draw()
         offset = cax.xaxis.get_major_formatter().get_offset()
         if len(offset) > 0:
             cax.xaxis.get_offset_text().set_visible(False)
-            fontsize = cax.get_xticklabels()[0].get_fontsize()
-            cax.annotate(offset, (1, -0.5), xycoords='axes fraction', ha='right', va='top', fontsize=fontsize - 1)
+            cax_tick_fontsize = cax.get_xticklabels()[0].get_fontsize()
+            cax.annotate(offset, (1, -0.5), xycoords='axes fraction', ha='right', va='top', fontsize=cax_tick_fontsize - 1)
 
     return colorbar
 
@@ -503,14 +549,20 @@ def composite_field_overlay(dataset, field, base_im):
     # Get normalization and colormap data for the iterand data
     norm, cmap = composite_normalization_colormap(dataset, field=field, contour_levels=base_im.levels)
     
-def composite_plot(dataset, models, experiments, field, plot_type, contour_levels=16, format='contour', overlay=False, parent_fig=None, grid_overlay=False, dpi=96, diagnostic=False):
+def composite_plot(dataset, models, experiments, field, plot_type, contour_levels=16, format='contour', overlay=False, parent_fig=None, grid_overlay=False, dpi=96, statistics=True, diagnostic=False):
 
+    # Define font sizes
+    fontsize = {'subplot_inline_label': 11,
+                'suplabel': 16}
+    # Define names of experiments
+    run_control, run_experiment = experiments[0], experiments[1]
+    experiment_long_names = {experiment: get_experiment_long_names(experiment) for experiment in [run_control, run_experiment]}
     # Get xarray-compatible field name for pressure-level slices
     field = field.split('hPa')[0] if 'hPa' in field else field
     # Define the width of the white masking for divergent data
     diverging_mask_width = 1
     # Get normalization and colormap data for the iterand data
-    norms, cmaps = composite_normalization_colormap(dataset, field=field, contour_levels=contour_levels, diverging_mask_width=diverging_mask_width)
+    norms, cmaps = composite_normalization_colormap(dataset, experiments_in=[run_control, run_experiment], field=field, contour_levels=contour_levels, diverging_mask_width=diverging_mask_width)
     
     # Set up basis vector names for plots
     coordinates = {'planar': {'x': 'grid_xt', 'y': 'grid_yt'},
@@ -611,13 +663,15 @@ def composite_plot(dataset, models, experiments, field, plot_type, contour_level
             if grid_overlay:
                 grid = ax.grid(color='k', alpha=0.25, linestyle='--', linewidth=0.5)
             # Add inline statistics
-            if not overlay:
-                ax = subplot_statistics(arr, fig, ax, text_color=text_color, text_offset=preplotted)
+            if statistics:
+                if not overlay:
+                    ax = subplot_statistics(arr, fig, ax, text_color=text_color, text_offset=preplotted)
             # Add subplot identifier
             if not preplotted:
-                subplot_identifier = ax.annotate('({0})'.format(chr(ord('a') + len(axes))), 
+                experiment_name = experiment_long_names[experiment] if experiment in experiment_long_names.keys() else f'{experiment_long_names[run_control]} - {experiment_long_names[run_experiment]}'
+                subplot_identifier = ax.annotate('({0}) {1}, {2}'.format(chr(ord('a') + len(axes)), model, experiment_name), 
                                                 xy=(0.04*aspect_ratio, 0.96), xycoords='axes fraction', 
-                                                fontsize=8, color='k', va='top', ha='left')
+                                                fontsize=fontsize['subplot_inline_label'], color='k', va='top', ha='left')
                 subplot_identifier.set_path_effects([matplotlib.patheffects.Stroke(linewidth=1, foreground='white'),
                                                     matplotlib.patheffects.Normal()])
             
@@ -631,13 +685,834 @@ def composite_plot(dataset, models, experiments, field, plot_type, contour_level
         fig.tight_layout()
         fig.legend(ncols=len(experiments), bbox_to_anchor=[0.5, 1.05], loc='center', frameon=False)
         
+    fig.tight_layout()
     
+
+    ''' Apply figure labels. '''
+    supxlabel_xpos, supxlabel_ypos = 0.525, -0.05 if plot_type == 'planar' else -0.025
+    supylabel_xpos, supylabel_ypos = -0.05 if plot_type == 'planar' else -0.025, None
+    if plot_type == 'planar':
+        fig.supxlabel('Distance from TC center [degrees]', x=supxlabel_xpos, y=supxlabel_ypos, fontsize=fontsize['suplabel'])
+        fig.supylabel('Distance from TC center [degrees]', x=supylabel_xpos, y=supylabel_ypos, fontsize=fontsize['suplabel'])
+    elif plot_type == 'azimuthal_2D':
+        fig.supxlabel('Distance from TC center [degrees]', x=supxlabel_xpos, y=supxlabel_ypos, fontsize=fontsize['suplabel'])
+        fig.supylabel('Pressure level [hPa]', x=supylabel_xpos, y=supylabel_ypos, fontsize=fontsize['suplabel'])
     
     return fig, gs, axes
 
 ### End compositing support methods
 
-def density_grid(data, model_names=['HIRAM', 'AM2.5', 'FLOR'], experiments=['control', 'swishe'], difference_order='rtl', bin_resolution=5, dpi=96):
+def TC_density_grid(model_names, experiment_names, year_range, FLOR_year_adjustment=1900, difference_order='ltr', 
+                 bin_resolution=5, storm_type=None, dpi=96, savefig=True):
+
+    densities = tc_analysis.TC_density(model_names, experiment_names, year_range, FLOR_year_adjustment=FLOR_year_adjustment, bin_resolution=bin_resolution, storm_type=storm_type)
+    year_min, year_max = min(year_range), max(year_range)
+
+    # Ensure input data is of proper form
+    if isinstance(model_names, str):
+        model_names = [model_names]
+    elif isinstance(model_names, list) or isinstance(model_names, tuple):
+        model_names = model_names
+
+    if isinstance(experiment_names, str):
+        experiment_names = [experiment_names]
+    elif isinstance(experiment_names, list) or isinstance(experiment_names, tuple):
+        experiment_names = experiment_names
+
+    # Ensure dpi is publication quality if requested
+    dpi = 300 if savefig else dpi
+
+    # Define control and experiment names (assume both are in the density dictionary)
+    if len(experiment_names) == 2:
+        run_CTL, run_EXP = experiment_names
+    else:
+        run_CTL, run_EXP = None, None
+        
+    ''' Begin plotting. '''
+    # Note: number of rows is dictated by number of models + 1 (for colorbar) 
+    nrows = len(model_names) + 1
+    # Note: number of columns is dictated by number of experiments; 3 columns for a comparison of 2 experiments, number of experiments otherwise
+    ncols = 3 if len(experiment_names) == 2 else len(experiment_names)
+    # Pre-define height ratios based on number of rows
+    height_ratios = [1 if i < nrows-1 else 0.05 for i in range(0, nrows)]
+    # Initialize figure and grid
+    fig, grid = [plt.figure(figsize=(5*ncols, 2.25*(nrows-1)), dpi=dpi, constrained_layout=True), 
+                 matplotlib.gridspec.GridSpec(nrows=nrows, ncols=ncols, height_ratios=height_ratios, wspace=0.1, hspace=0)]
+    # Define longitudinal offset
+    longitude_offset = 180
+    # Define projections (working and reference projections)
+    proj, proj_ref = ccrs.PlateCarree(central_longitude=longitude_offset), ccrs.PlateCarree()
+        
+    # Initialize normalization and colormaps. Save into dictionary for future use in colorbars.
+    norms, cmaps = {}, {}
+    bounds = 12 # number of levels to bin for the normalization
+    # Maximum value across 'run_control' and 'run_experiment' for all models. Scale down to improve visibility of bins with lower counts.
+    vmax_runs = 0.75*max([np.nanmax(sv) for k, v in densities.items() for sk, sv in v.items()]) 
+    # Calculate density differences for the models of interest (given by 'model_names' argument)
+    if run_CTL and run_EXP:
+        run_DIFF = f'{run_CTL}-{run_EXP}' if difference_order == 'ltr' else f'{run_EXP}-{run_CTL}'
+    else:
+        run_DIFF = None
+    # Log extrema across all model difference plots for future normalization
+    difference_extrema = {model_name: None for model_name in model_names}
+    # Define direction for difference calculation
+    difference_factor = -1 if difference_order == 'rtl' else 1
+    # Iterate over models to calculate differences for each
+    if run_DIFF:
+        for model_name in densities.keys():
+            densities[model_name][run_DIFF] = difference_factor * (densities[model_name][run_CTL] - densities[model_name][run_EXP])
+            difference_extrema[model_name] = max([abs(np.nanmin(densities[model_name][run_DIFF])), abs(np.nanmax(densities[model_name][run_DIFF]))])
+        # Get extreme values for difference runs and find largest magnitude for normalization
+        vmax_difference = max([np.nanmax(abs(v)) for k, v in difference_extrema.items()]) # maximum value across 'run_control' and 'run_experiment' for all models
+    # Assign normalization and colormap values
+    for model_name in densities.keys():
+        for experiment in densities[model_name].keys():
+            if '-' in experiment and run_DIFF: 
+                norm, cmap = norm_cmap([0], 'density', extrema=(-vmax_difference, vmax_difference))
+                cmap = diverging_colormap_adjust(norm, cmap, additional=1)
+                norms[experiment] = norm
+                cmaps[experiment] = cmap
+            else:
+                norm, cmap = norm_cmap([0], 'density', extrema=(0, vmax_runs))
+                norms[experiment] = matplotlib.colors.BoundaryNorm(np.array([0, 0.25, 0.5, 1, 2, 4, 8, 16]), 256)
+                cmaps[experiment] = 'Reds'
+                cmaps[experiment] = cmap_white_adjust(cmaps[experiment], len(norm.boundaries))
+    
+    # Pass 2: Iterate through density dictionary to plot each model and each experiment's density data.
+    for model_index, model_name in enumerate(densities.keys()):
+        for experiment_index, experiment in enumerate(densities[model_name].keys()):
+            # Boolean to control whether or not model and years print. Turn off for the difference plot.
+            subplot_title = False if "-" in experiment else True
+            # Adjustment to FLOR model years
+            min_year = year_min if model_name == 'FLOR' else year_min
+            max_year = year_max if model_name == 'FLOR' else year_max
+            # Control plot suplabels - tailor-made for a 3-model composite plot
+            xlabel = True if len(densities[model_name].keys()) == 3 and (experiment_index == 1) and (model_index == 2) else False
+            ylabel = True if len(densities[model_name].keys()) == 3 and (experiment_index == 0) and (model_index == 1) else False
+            # Set up the figure structure for the iterand subplot
+            fig, grid, ax, proj = basemap(fig, grid, model_name, experiment, (min_year, max_year), 
+                                          row_num=model_index, col_num=experiment_index, land=True, xlabel=xlabel, ylabel=ylabel, 
+                                          subplot_title=subplot_title, label_fontsize=10)
+
+            # Plot the data
+            longitude = densities[model_name][experiment].columns
+            latitude = densities[model_name][experiment].index
+            im = ax.pcolormesh(longitude, latitude, densities[model_name][experiment], norm=norms[experiment], cmap=cmaps[experiment], transform=proj_ref)
+            
+            ''' End replacement here. '''
+            # Tick positioning: move xticks to top and hide if not the first row
+            if model_index != nrows-2:
+                ax.set_xticklabels([])
+            # Tick positioning: move yticks to right and hide if not the last column
+            if experiment_index != 0:
+                ax.set_yticklabels([])
+    
+    ''' Create 2 colorbars: 1 for the experiments, another for the difference. '''
+    # Colorbar ticklabel formatter
+    fmt = lambda x, pos: '{:.2f}'.format(x)
+    
+    # Experiments
+    cw_column = 1 if len(experiment_names) == 2 else len(experiment_names) // 2
+    cw_width = 0.75 # in units of axes fraction
+    cw_experiments = fig.add_subplot(grid[-1, 0:2]) # 'cw' stands for 'cax_wrapper'
+    cw_experiments.set_axis_off()
+    cax_experiments = cw_experiments.inset_axes([(1-cw_width)/2, -4, cw_width, 1])
+    colorbar_experiments = fig.colorbar(matplotlib.cm.ScalarMappable(norms[experiment_names[0]], cmaps[experiment_names[0]]), 
+                                        orientation='horizontal', cax=cax_experiments, format=matplotlib.ticker.FuncFormatter(fmt))
+    colorbar_experiments.set_label('TC days per year per {0}$\degree$ bin'.format(bin_resolution), labelpad=10)
+    # Difference
+    if run_DIFF:
+        cw_difference = fig.add_subplot(grid[-1, -1]) # 'cw' stands for 'cax_wrapper'
+        cw_difference.set_axis_off()
+        cax_difference = cw_difference.inset_axes([0, -3, 1, 1])
+        colorbar_difference = fig.colorbar(matplotlib.cm.ScalarMappable(norms[run_DIFF], cmaps[run_DIFF]), 
+                                        orientation='horizontal', cax=cax_difference, format=matplotlib.ticker.FuncFormatter(fmt))
+        colorbar_difference.set_label('$\\Delta$(TC days per year per {0}$\degree$ bin)'.format(bin_resolution), labelpad=10)
+
+    if savefig:
+        dirname = '/projects/GEOCLIM/gr7610/figs/swishe-small_scale'
+        filename = 'TC_density_grid-{0}.png'.format(storm_type)
+        plt.savefig(os.path.join(dirname, filename), bbox_inches='tight', dpi=dpi)
+
+def pdf(data, models=['AM2.5', 'FLOR', 'HIRAM'], param='center_lat', num_bins=60, mode='pdf', dpi=144):
+    
+    fig, ax = plt.subplots(figsize=(4, 3), dpi=dpi)
+    
+    # Define list of colors (one color per model) and line styles (one linestyle per experiment)
+    colors = ['b', 'g', 'm']
+    linestyles = ['-', '--']
+    
+    # Collect data for output counts
+    counts = {model: {} for model in models}
+
+    # Obtain maximum values from histogram distributions
+    vmax = 0
+    # Save label names
+    legend_labels = []
+    # Iterate over all models and experiments
+    for model_index, model in enumerate(models):
+        for experiment_index, experiment in enumerate(data[model].keys()):
+            # Get unique values for the parameter passed
+            out = data[model][experiment]['unique'][param].dropna()
+            # Filter out nans and infs
+            out = out.loc[np.isfinite(out.values)]
+            
+            legend_labels.append('{0}, {1}'.format(model, experiment))
+            bw_method = 0.1 if param == 'center_lat' else 0.25
+            pd.DataFrame(out).plot.kde(bw_method=bw_method, lw=2.5, color=colors[model_index], linestyle=linestyles[experiment_index],
+                                       legend=False, ax=ax, zorder=5)
+            if param not in ['center_lat']:
+                ax.axvline(np.nanmedian(out), lw=1, alpha=0.375, color=colors[model_index], linestyle=linestyles[experiment_index], zorder=1, label='_nolegend_')
+            
+            # Get bin values and bin edges, don't plot
+            n, bins, _ = ax.hist(out, bins=num_bins, histtype=u'step', density=True, lw=0, label='_nolegend_') 
+            # Incorporate mutiplicative factor - if mode == 'full_count', factor = length of data; else, factor = 1. The former gives you a full count.
+            factor = len(out) if mode == 'full_count' else 1
+            # Plot the distribution
+            # ax.plot(bins[:-1], n*factor, lw=2.5, color=colors[model_index], linestyle=linestyles[experiment_index], 
+            #         label='{0}, {1}'.format(model, experiment))
+            # Check to see if number of entries for a given bin exceeds the maximum (vmax)
+            vmax = np.nanmax(n*factor) if np.nanmax(n*factor) > vmax else vmax
+            # Add data length to counts
+            counts[model][experiment] = {'bins': bins, 'counts': n*len(out), 'median': np.median(out), 'std': np.nanstd(out)}
+            
+    # Adjust axis limits: handle limit differently for center_lat to allow for inline legend
+    if param == 'max_wind':
+        ax.set_xlim([10, 50])
+    elif param == 'min_slp':
+        ax.set_xlim([900, 1020])
+    ax.set_ylim([0, 1.1*vmax])
+    if param == 'center_lat':
+        # Curb latitudinal extent of TC monitoring to midlatitude extrema
+        ax.set_xlim([-60, 60])
+    elif param == 'duration':
+        # Storms lasting > 30 d are unrealistic
+        ax.set_xlim([0, 30])
+    
+    # Case-by-case dictionary for improved plot labeling (log the long names)
+    param_names = {'center_lat': 'Latitude', 'max_wind': 'Maximum 10 m wind speed [m s$^{-1}$]', 'min_slp': 'Minimum sea level pressure [hPa]'}
+    # Plot labeling and formatting
+    ax.set_xlabel(param_names[param], labelpad=10)
+    ax.set_ylabel('Probability density', labelpad=10)
+    ax.yaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter('%.2f'))
+    # Handle legend plotting differently for center_lat to allow for space inline
+    if param == 'center_lat':
+        ax.legend(legend_labels, frameon=False, loc='upper left', prop={'size': 8})
+    else:
+        ax.legend(legend_labels, frameon=False, loc='best', prop={'size': 8})
+        
+    # Print median and standard deviations for all model-experiment combinations
+    for model in counts.keys():
+        for experiment in counts[model].keys():
+            print('{0} - {1}, {2}: median: {3:.2f}, std.dev: {4:.2f}'.format(param, model, experiment,
+                                                                             counts[model][experiment]['median'], counts[model][experiment]['std']))
+        
+    return counts
+
+def intensity_distribution_plot(data, intensity_metric='max_wind', intensity_bin=None,
+                                bin_width=4, rolling_mean_window=6, interpolation_factor=4, 
+                                plot_input=None, plot_histogram=False, dpi=96, print_statistics=False):
+    
+    def rolling_mean(a, window=3):
+        ret = np.cumsum(a, dtype=float)
+        ret[window:] = ret[window:] - ret[:-window]
+        return ret[window - 1:] / window
+
+    # Get model names from the input data
+    models = data.keys()
+    # Collect iterand extrema
+    extrema = {'x': {'min': np.nan, 'max': np.nan},
+               'y': {'min': np.nan, 'max': np.nan}}
+    # Collect processed data
+    output = {}
+    
+    # Define figure as a function of rows (different models)
+    if not plot_input:
+        fig, axes = plt.subplots(figsize=(4, 2*len(models)), dpi=dpi, nrows=len(models), ncols=1)
+        axis_index = 0
+    else:
+        fig, axes, axis_index = plot_input
+    # Collect images for legend plotting
+    legend_data = {}
+    # Get number of figure columns
+    nrows, ncols = fig.axes[0].get_subplotspec().get_gridspec().get_geometry()
+    # Iterate over each model
+    for model_index, model in enumerate(models):
+        # Axes location
+        axis_number = (model_index*ncols) + axis_index
+        # Initialize dictionary at model level to collect processed data
+        output[model] = {}
+        # Get experiment names from the input data
+        experiments = data[model].keys()
+        # Define the model-specific axis
+        ax = fig.axes[axis_number]
+        # Iterate over each experiment
+        for experiment_index, experiment in enumerate(experiments):
+            # Get iterand color scheme
+            color, linestyle = cycler(experiment_index)['c'], cycler(experiment_index)['ls']
+            # Get intensity data for a given model and experiment configuration for the chosen metric
+            if intensity_bin:
+                # Get all storm data
+                entries = data[model][experiment]['raw']
+                # Filter by intensity bin
+                intensity_bin_entries = entries.loc[entries['intensity_bin'] == intensity_bin]
+                # Initialize list to hold strongest storm entry for each storm, to be concatenated lated
+                entry_list = []
+                # For each unique storm, get the strongest entry corresponding to the given intensity bin
+                for unique_storm_id in intensity_bin_entries['storm_id'].unique():
+                    # Get unique storm entry
+                    unique_storm = intensity_bin_entries.loc[intensity_bin_entries['storm_id'] == unique_storm_id]
+                    # Get metric-dependent maximum value
+                    
+                    if intensity_metric == 'min_slp':
+                        entry = unique_storm.loc[unique_storm[intensity_metric] == unique_storm[intensity_metric].min()][intensity_metric]
+                    else:
+                        entry = unique_storm.loc[unique_storm[intensity_metric] == unique_storm[intensity_metric].max()][intensity_metric]
+                    entry_list.append(entry)
+                # Concatenate entries
+                x = pd.concat(entry_list)
+            else:
+                x = data[model][experiment]['unique'][intensity_metric]
+            # Collect processed data for the iterand configuration
+            output[model][experiment] = x
+            # Define extrema for the intensity distribution. Make them integers for cleaner processing.
+            experiment_vmin_x, experiment_vmax_x = np.round(np.nanmin(x)), np.round(np.nanmax(x))
+            # Round to nearest bin width for cleaner divisions. 
+            # Note the decrement and increment for floor and ceiling, respectively, to foresee domain reductions due to rolling mean.
+            experiment_vmin_x = bin_width * np.floor(experiment_vmin_x/bin_width) - (rolling_mean_window // 2) * bin_width # set to floor to capture minima
+            experiment_vmax_x = bin_width * np.ceil(experiment_vmax_x/bin_width) + (rolling_mean_window // 2) * bin_width # set to ceiling to capture maxima
+            # Define bins for histogram definition
+            bins = np.arange(experiment_vmin_x, experiment_vmax_x + bin_width, bin_width)
+            # Plot histogram and extract outputs for future interpolation
+            histogram_alpha = 0.25 if plot_histogram else 0
+            histogram_output = ax.hist(x, density=True, bins=bins, histtype='stepfilled',
+                                       facecolor=color, align='left', alpha=histogram_alpha, zorder=1)
+            densities, bin_locations = histogram_output[0], histogram_output[1]
+            
+            ''' Derive an interpolated pseudo-probability density function. '''
+            # Derive the interpolation number (length of bins multiplied by some factor)
+            interpolation_number = len(bins) * interpolation_factor
+            # Derive the interpolation bin locations
+            interpolated_bins = np.arange(experiment_vmin_x, experiment_vmax_x + bin_width / interpolation_factor, bin_width / interpolation_factor)
+            # Interpolate the histogram-derived densities to the interpolated bin locations
+            interpolated_densities = np.interp(interpolated_bins, bin_locations[:-1], densities)
+            # Redefine bins for the rolling mean
+            interpolated_bins_rolling = interpolated_bins[(rolling_mean_window//2):-(rolling_mean_window//2 - 1)]
+            # Apply a rolling mean (centered) to the densities
+            interpolated_densities_rolling = rolling_mean(interpolated_densities, rolling_mean_window)
+            # Plot the interpolated data. Shift the bin locations by half the bin width
+            experiment_name = 'SWISHE' if experiment == 'CTL1990s_swishe' else 'CTL' if experiment == 'CTL1990s' else experiment
+            im = ax.plot(interpolated_bins_rolling, interpolated_densities_rolling, color=color, linewidth=3, zorder=10, label=experiment_name)
+            
+            # Get median value
+            median = np.median(x)
+            median_density = interpolated_densities_rolling[np.argmin(np.abs(interpolated_bins_rolling - median))]
+            # Plot the median value
+            ax.plot([median, median], [0, median_density], lw=1, ls=':', color=color)
+            print('Median value for {0}, {1}: {2:.2f}'.format(model, experiment, median))
+        
+            # Check experiment extrema against overall extrema
+            extrema['x']['min'] = experiment_vmin_x if (np.isnan(extrema['x']['min']) or experiment_vmin_x < extrema['x']['min']) else extrema['x']['min']
+            extrema['x']['max'] = experiment_vmax_x if (np.isnan(extrema['x']['max']) or experiment_vmax_x > extrema['x']['max']) else extrema['x']['max']
+            extrema['y']['min'] = min(densities) if (np.isnan(extrema['y']['min']) or min(densities) < extrema['y']['min']) else extrema['y']['min']
+            extrema['y']['max'] = max(densities) if (np.isnan(extrema['y']['max']) or max(densities) > extrema['y']['max']) else extrema['y']['max']
+
+            # Collect a plot entry for future plotting
+            legend_data[experiment_name] = im[0]
+    
+    # Override extrema for winds.
+    if intensity_metric == 'max_wind':
+        extrema['x']['min'] = 0
+        
+    ''' Apply extrema to define axis limits. '''
+    # Iterate over each model
+    for model_index, model in enumerate(models):
+        # Axes location
+        axis_number = (model_index*ncols) + axis_index
+        # Define the model-specific axis
+        ax = fig.axes[axis_number]
+        # Add annotation to show model name
+        ax.annotate(model, (0.03, 0.96), xycoords='axes fraction', fontsize=10, va='top')
+        # Iterate over each experiment
+        for experiment_index, experiment in enumerate(experiments):
+            # Set minor tick locations automatically
+            ax.xaxis.set_minor_locator(matplotlib.ticker.AutoMinorLocator())
+            # Print statistics if chosen
+            sample_count = len(data[model][experiment]['unique'][intensity_metric])
+            if print_statistics:
+                ax.annotate('N({0}) = {1}'.format(experiment, sample_count), (0.98, 0.96 - experiment_index*0.08), xycoords='axes fraction', 
+                            fontsize=8, ha='right', va='top')
+            else:
+                print('Sample count for {0}, {1}: {2}'.format(model, experiment, sample_count))
+            # Ensure that subplot limits are defined by the data extrema
+            ax.set_xlim([extrema['x']['min'], extrema['x']['max']])
+            ax.set_ylim([extrema['y']['min'], extrema['y']['max']])
+            # Only plot the legend for the top subplot
+            if model_index == 0 and not plot_input:
+                ax.legend(frameon=False, ncols=len(experiments), loc='upper center', bbox_to_anchor=(0.5, 1.3))
+            if model_index == len(models) - 1:
+                long_name, units = field_properties(intensity_metric)
+                ax.set_xlabel("{0} [{1}]".format(long_name, units))
+
+    fig.tight_layout()     
+
+    return output, legend_data, fig, axes
+
+def swishe_frequency(models=['HIRAM', 'AM2.5', 'FLOR'], dpi=144, set_visible=True):
+    """Plot frequency of SWISHE filter application using the 'swfq' diagnostic on 'atmos_4xdaily' files for SWISHE runs.
+
+    Args:
+        models (list, optional): list of models to visualize data for. Defaults to ['FLOR', 'HIRAM'].
+    """
+    # Initialize figure and GridSpec object with the number of rows equal to the number of models plotted
+    fig, gs = plt.figure(figsize=(6, 2*len(models)), dpi=dpi), matplotlib.gridspec.GridSpec(nrows=len(models), ncols=1, hspace=0.75)
+    # Define colormap and normalization
+    cmap, norm = cmap_white_adjust('Reds'), matplotlib.colors.BoundaryNorm(np.linspace(0, 2, 11), 256)
+    # Filename dictionary
+    filenames = {'HIRAM': 'model_HIRAM-exp_CTL1990s_swishe-type_atmos-var_swfq-mean_year-resample-101_150.nc',
+                 'AM2.5': 'model_AM2.5-exp_CTL1990s_swishe-type_atmos-var_swfq-mean_year-resample-full-101_150.nc',
+                 'FLOR': 'model_FLOR-exp_CTL1990s_swishe-type_atmos-var_swfq-mean_year-resample-full-2050_2100.nc'}
+    # Iterate over each model, using 'row' as the indexer
+    for row, model in enumerate(models):
+        # Get directory name for data
+        dirname = '/tigress/GEOCLIM/gr7610/analysis/model_out'
+        # Get filenames for data
+        filename = os.path.join(dirname, filenames[model])
+        # Access the data, targeting 'swfq' to get SWISHE application frequency
+        data = xr.open_dataset(filename)['swfq']
+        # Use the basemap() method to obtain the base map figure upon which data is plotted
+        fig, gs, ax, proj = basemap(fig, gs, model, 'SWISHE application frequency', (data.time.min().dt.year.item(), data.time.max().dt.year.item()), row_num=row, land=True)
+        # Plot contoured data at 10 levels over a 2% range (intervals of 0.2% for legibility)
+        im = ax.contourf(data.grid_xt, data.grid_yt, 100*data.sum(dim='time')/len(data.time.values), 
+                         levels=10, cmap=cmap, norm=norm, vmin=0, vmax=2, transform=proj)
+        # If row isn't the last one, hide the xlabel since axes are implicitly shared and equal
+        if row != gs.nrows-1:
+            ax.set_xlabel('')
+        # Plot the colorbar
+        cax = ax.inset_axes([1.03, 0, 0.03, 1])
+        colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax)
+        
+        long_name, units = field_properties('swfq')
+        colorbar.set_label('{0}'.format(units), rotation=270, labelpad=20)
+        
+    if not set_visible:
+        plt.clf()
+        
+    return data
+
+def basemap(fig, gs, model_name, experiment, year_range=None, row_num=0, col_num=0, extent=[0, 359, -60, 60], land=False,
+            xlabel=True, ylabel=True, subplot_title=True, label_fontsize=11, gridline_x_step=60, gridline_y_step=20,
+            gridline_minor_step=10, title_y=None):
+    """
+    Function to provide template map upon which geospatial data can be plotted.
+
+    Args:
+        fig (matplotlib Figure object): Figure object.
+        gs (matplotlib GridSpec object): GridSpec object.
+        model_name (str): name of model, used for annotation.
+        experiment (str): name of experiment, used for annotation.
+        year_range (list or tuple): 2-item list with minimum and maximum years.
+        row_num (int, optional): row number for use in a GridSpec object. Defaults to 0.
+        col_num (int, optional): column number for use in a GridSpec object. Defaults to 0.
+        extent (list, optional): 4-item geospatial extent list, with parameters of [minimum longitude, maximum longitude, minimum latitude, maximum latitude]. 
+                                 Defaults to [0, 359, -60, 60].
+        land (bool, optional): determine whether or not to add the land feature. Useful if land mask is used for data. Defaults to False.
+
+    Returns:
+        fig (matplotlib Figure object): Figure object.
+        gs (matplotlib GridSpec object): GridSpec object.
+        ax (matplotlib Subplot object): Subplot object.
+        proj (Cartopy projection object): Cartopy projection object.
+    """
+    
+    # Define longitudinal offset
+    longitude_offset = 180
+    # Define projections (working and reference projections)
+    proj, proj_ref = ccrs.PlateCarree(central_longitude=longitude_offset), ccrs.PlateCarree()
+    
+    # Initialize subplot
+    ax = fig.add_subplot(gs[row_num, col_num], projection=proj)
+    # Define extent
+    ax.set_extent(extent, crs=proj)
+    
+    if land:
+        ax.add_feature(cartopy.feature.LAND, color=(0.5, 0.5, 0.5, 0.25), zorder=99)
+    ax.coastlines()
+    
+    # Subplot labeling
+    title_y = title_y if title_y else 1.05
+    # Define year range string plotting
+    year_range_str = ', {0} to {1}'.format(min(year_range), max(year_range)) if year_range else ''
+    # Set left-hand side to be {model name}, {min year} to {max year}
+    if subplot_title:
+        subplot_title_model = ax.annotate('{0}{1}'.format(model_name, year_range_str),
+                                          (0, title_y), va='baseline', ha='left', xycoords='axes fraction', fontsize=label_fontsize)
+    # Set right-hand side to be {experiment name}
+    experiment_name = 'SWISHE' if experiment == 'CTL1990s_swishe' else 'CTL' if experiment == 'CTL1990s' else 'CTL-EXP' if '-' in experiment else experiment# override for publicatiom
+    subplot_title_experiment = ax.annotate('{0}'.format(experiment_name), (1, title_y), va='baseline', ha='right', 
+                                           xycoords='axes fraction', fontsize=label_fontsize)
+
+    # Define major ticks
+    gridline_x_major, gridline_y_major = [np.arange(extent[0] - longitude_offset, 
+                                                    extent[1] - longitude_offset + gridline_x_step, 
+                                                    gridline_x_step), 
+                                          np.arange(extent[2], 
+                                                    extent[3] + gridline_y_step, 
+                                                    gridline_y_step)]
+    gridline_x_minor, gridline_y_minor = [np.arange(extent[0] - longitude_offset, 
+                                                    extent[1] - longitude_offset + gridline_minor_step, 
+                                                    gridline_minor_step), 
+                                          np.arange(extent[2], 
+                                                    extent[3] + gridline_minor_step, 
+                                                    gridline_minor_step)]
+    
+    # Draw gridlines
+    gl = ax.gridlines(draw_labels=True, xlocs=[], ylocs=[0], linewidth=0.5, color='k', alpha=0.25, linestyle='-', crs=proj_ref)
+    gl.top_labels, gl.right_labels, gl.left_labels = False, False, False
+    # Define ticks
+    ax.set_xticks(gridline_x_major, crs=proj)
+    ax.set_yticks(gridline_y_major, [], crs=proj)
+    # Set minor ticks
+    ax.xaxis.set_minor_locator(matplotlib.ticker.FixedLocator(gridline_x_minor))
+    ax.yaxis.set_minor_locator(matplotlib.ticker.FixedLocator(gridline_y_minor))
+    ax.xaxis.set_major_formatter(matplotlib.ticker.ScalarFormatter())
+    # Set xticklabels last to prevent overriding
+    ax.set_xticklabels([x + 180 for x in gridline_x_major]) # override tick values that are projection-dependent
+
+    # Axis labels
+    if xlabel:
+        ax.set_xlabel('Longitude')
+    if ylabel:
+        ax.set_ylabel('Latitude')
+    return fig, gs, ax, proj_ref
+
+def basins(visualize=False, grid_type='atmos', save_netcdf=False):
+    
+    basins = {'global': [1, 360, -60, 59],
+             'NI': [40, 100, 0, 30],
+             'SI': [40, 120, -40, 0],
+             'WP': [100, 180, 0, 40],
+             'SP': [120, 260, -40, 0],
+             'EP': [180, 260, 0, 40],
+             'NA': [260, 360, 0, 40],
+             'SA': [300, 360, -40, 0],
+             'IPWP': [90, 170, -10, 10], # Maritime Continent as proxy for the Indo-Pacific Warm Pool
+             'ENSO': [190, 240, -5, 5]} # Maritime Continent as proxy for the Indo-Pacific Warm Pool}
+    
+    # Generate masks to filter by basin
+    basin_masks = {}
+    grid_path = '/tigress/GEOCLIM/gr7610/tools/AM2.5_atmos_area.nc' if grid_type == 'atmos' else '/tigress/GEOCLIM/gr7610/tools/FLOR_ocean_area.nc'
+    grid = xr.open_dataset(grid_path)
+    for i, basin_data in enumerate(basins.items()):
+        basin, basin_extent = basin_data
+        mask = np.full(shape=(len(grid.grid_yt), len(grid.grid_xt)), fill_value=0)
+
+        for j, y in enumerate(grid.grid_yt.values):
+            for i, x in enumerate(grid.grid_xt.values):
+                # Rectangular basins
+                if (x >= basin_extent[0]) and (x < basin_extent[1]) and (y >= basin_extent[2]) and (y < basin_extent[3]):
+                    mask[j, i] = 1
+                # Special cases - handle the Central American isthmus
+                if basin in ['EP', 'NA']:
+                    x0, x1, y0, y1 = [260, 295, 0, 22]
+                    m = (y0 - y1)/(x1 - x0)
+                    f_y = m*(grid.grid_xt.values - x1) + y0
+                    if (x >= x0) and (x < x1) and (y >= y0) and (y < f_y[i]):
+                        mask[j, i] = 1 if basin == 'EP' else 0
+            basin_masks[basin] = xr.DataArray(name=basin,
+                                              data=mask,
+                                              dims=grid.dims,
+                                              coords=grid.coords)
+
+    if visualize:
+        proj, proj_ref = ccrs.PlateCarree(central_longitude=180), ccrs.PlateCarree()
+        fig, gs = plt.figure(figsize=(8, 3), dpi=300), matplotlib.gridspec.GridSpec(nrows=1, ncols=1)
+
+        fig, gs, ax, proj_ref = basemap(fig, gs, 'Basins', '', row_num=0, col_num=0, extent=[0, 359, -60, 60], land=True)
+        
+        prop_cycle = plt.rcParams['axes.prop_cycle']
+        colors = prop_cycle.by_key()['color']
+        
+        ax.coastlines()
+        for i, basin_data in enumerate(basins.items()):
+            basin, basin_extent = basin_data
+            text_offset_horizontal = 40 if basin == 'NA' else 0
+            if basin in ['EP', 'NA']:
+                if basin == 'EP':
+                    xy = [(180, 40), (260, 40), (260, 22), (295, 0), (180, 0)]
+                    patch = matplotlib.patches.Polygon(xy, closed=True, fc='none', lw=2, ec=colors[i], transform=proj_ref, zorder=i+10)
+                else:
+                    xy = [(260, 40), (360, 40), (360, 0), (295, 0), (260, 22)]
+                    patch = matplotlib.patches.Polygon(xy, closed=True, fc='none', lw=2, ec=colors[i], transform=proj_ref, zorder=i+10)
+            else:
+                patch = matplotlib.patches.Rectangle(xy=(basin_extent[0], basin_extent[2]),
+                                                    width=(basin_extent[1] - basin_extent[0]), height=(basin_extent[3] - basin_extent[2]), 
+                                                    fc='none', lw=2, ec=colors[i], transform=proj_ref, zorder=i+10)
+            ax.annotate(text=basin, xy=(basin_extent[0], basin_extent[2]), xytext=(5 + text_offset_horizontal, 6), 
+                        textcoords='offset points', transform=proj_ref, bbox=dict(facecolor=(1, 1, 1, 0.9), ec='None'))
+            ax.add_patch(patch)
+        ax.set_extent([0, 359, -60, 60])
+        plt.show()
+        
+    if save_netcdf:
+        dirname = '/projects/GEOCLIM/gr7610/tools'
+        filename = 'basin_mask.nc'
+        basin_dataarray = xr.merge(basin_masks.values())
+        basin_dataarray.to_netcdf(os.path.join(dirname, filename), mode='w')
+
+    return basins, basin_masks
+
+def TC_density_modifier(track_data: pd.DataFrame, 
+                        track_bins: np.array):
+
+    ''' Helper function for plot_TC_density() to limit histogram counts to a single instance of a storm in a binned zonal band. '''
+    
+    # 1. Group by latitude bins
+    # 2. Get first instance of the storm
+    # 3. Get rid of nan rows
+    # 4. Get rid of the MultiIndex level corresponding to latitude bins
+    # 5. Reset the index to match input DataFrame column structure
+    output = track_data.groupby(['storm_id', pd.cut(track_data['center_lat'], track_bins)]).first().dropna().droplevel(1).reset_index()
+    
+    return output
+
+def TC_density_histogram(model_name: str, 
+                         experiment_names: str | list, 
+                         year_range: tuple[int, int], 
+                         ax,
+                         month_range: tuple[int, int] = (1, 13), 
+                         basin_name: str | None = 'global', 
+                         storm_type: str | None = 'TS',
+                         orientation: str | None = 'horizontal',
+                         color: str | None = 'b',
+                         axis_depth: float = 0.1,
+                         raw_track_density: bool = False,
+                         diagnostic: bool = False):
+
+    ''' Method to append a histogram of TC track density onto an existing plot. '''
+
+    start_time = time.time()
+    year_adjustment = 0 if model_name == 'FLOR' else 1900
+
+    ''' Initialization process. '''
+    # Load basins if not provided. This will be slower than if you preload it once into memory.
+    basins = xr.open_dataset('/projects/GEOCLIM/gr7610/tools/basin_mask.nc')
+    if diagnostic:
+        print(f'[visualization.plot_TC_density()] Checkpoint 0: load basin mask, {(time.time() - start_time):.3f} s elapsed')
+
+    # Define color list for bar plotting
+    colors = ['b', 'g', 'r', 'm', 'c']
+
+    # Define bins over which track densities will be obtained
+    track_bins = np.arange(-60, 60, 5)
+    
+    # Initialize track dictionary. Each key will hold track data belonging to a distinct experiment.
+    track_data = {}
+    
+    # Intake data type checker
+    if isinstance(experiment_names, str):
+        # If a string is provided, make the string a list with a single item.
+        experiment_names = [experiment_names]
+    elif isinstance(experiment_names, list) or isinstance(experiment_names, tuple):
+        experiment_names = experiment_names
+    else:
+        print(f'[visualization.plot_TC_density()] The experiment name(s) provided must be in the form of a string, tuple, or list. The currently provided type is {type(experiment_names)}. Please correct this, exiting function.')
+        sys.exit()
+
+    ''' Data intake and save process. '''
+    # Iterate over all experiments to get extrema
+    for experiment_name in experiment_names:
+        # Load all track data for the given model name, experiment name, and year range
+        tracks = tc_analysis.load_TC_tracks(model_name, experiment_name, year_range, month_range=month_range)[model_name][experiment_name]['raw']
+        # For each storm, limit histogram counts to a single instance of a storm in a binned zonal band.
+        # This is intended to give an instance of TC impacts based on extent in space, rather than time. 
+        # This can be turned off by enabling the `raw_track_density` argument.
+        if not raw_track_density:
+            tracks = TC_density_modifier(tracks, track_bins)
+        if diagnostic:
+            print(f'[visualization.plot_TC_density()] Checkpoint 1: load TC tracks, {(time.time() - start_time):.3f} s elapsed')
+    
+        # Filter for the given basin
+        basin_filter = utilities.in_basin(basins, basin_name, tracks['center_lon'], tracks['center_lat'])
+        basin_tracks = tracks[basin_filter]
+        track_counts = basin_tracks['center_lat']
+        track_histogram, _ = np.histogram(track_counts, track_bins)
+
+        # Save the data
+        track_data[experiment_name] = {'counts': track_counts, 
+                                       'bins': track_bins, 
+                                       'extremum': np.nanmax(track_histogram), 
+                                       'year_range': (tracks['time'].dt.year.min(), tracks['time'].dt.year.max())}
+        
+        if diagnostic:
+            print(f'[visualization.plot_TC_density()] Checkpoint 2: get track density, {(time.time() - start_time):.3f} s elapsed')
+            print('---> Maximum number of TCs for model {0}, experiment {1}, for year range {2}-{3}: {4:0d}\n'.format(model_name, 
+                                                                                                                experiment_name,
+                                                                                                                min(year_range), max(year_range),
+                                                                                                                np.nanmax(track_histogram)))
+
+    # Get the maximum value over all experiments for axis limit, apply a small multiplicative factor so extent captures maximum value
+    axis_extremum = 1.1 * max([v['extremum'] for v in track_data.values()])
+
+    
+    ''' Data visualization process. '''
+    for index, experiment_name in enumerate(experiment_names):
+        inset = ax.inset_axes([0, 1, 1, axis_depth]) if orientation == 'vertical' else ax.inset_axes([1, 0, axis_depth, 1])
+        inset.set_axis_off()
+
+        counts, bins = track_data[experiment_name]['counts'].values, track_data[experiment_name]['bins']
+        inset.hist(counts, bins, density=False, histtype='step', orientation=orientation, color=colors[index])
+    
+        # Set the limit for number of storms to adjust the axis for. This should be higher than the highest number of storms per year in a bin.
+        inset.set_ylim([0, axis_extremum]) if orientation == 'vertical' else  inset.set_xlim([0, axis_extremum])
+    
+    if diagnostic:
+        print(f'[visualization.plot_TC_density()] Checkpoint 3: plot TCs, {(time.time() - start_time):.3f} s elapsed')
+
+    return tracks
+
+def tc_activity(track_data, model_name, experiments=['control', 'swishe'], storm_types=['TS', 'C15w'], 
+                year_range=None, savefig=False):
+    
+    ''' Function to generate monthly climatologies of TC activity, subdivided per basin. See the script snippet below for recommended function use. '''
+    
+    ####### Begin recommended run snippet. ##########
+    monthly_track_data = {}
+    # for model in ['HIRAM', 'AM2.5', 'FLOR']:
+    #     year_range = (101, 150) if model in ['HIRAM', 'AM2.5'] else (150, 200)
+    #     track_data = {model: {}}
+    #     for storm_type in ['TS', 'C15w']:
+    #         temp = tc_analysis.tc_track_data([model], ['control', 'swishe'], storm_type=storm_type, year_range=year_range)
+    #         track_data[model][storm_type] = temp[model]
+    #         monthly_track_data[model] = track_data
+    #     tc_activity(track_data, model, experiments=['control', 'swishe'], storm_types=['TS', 'C15w'], year_range=year_range, savefig=True)
+    ####### End recommended run snippet. ##########
+    
+    ''' Data loading. '''
+    # Import basin data
+    basins, basin_masks = basins()
+
+    ''' Data processing. '''
+    # Set up dictionary to hold monthly-grouped track data for a given model
+    monthly_track_data = {}
+    
+    # Iterate over each experiment
+    for experiment in experiments:
+        monthly_track_data[experiment] = {}
+        # Iterate over each basin
+        for basin in basins.keys():
+            monthly_track_data[experiment][basin] = {}
+            # Iterate over each storm type
+            for storm_type in storm_types:
+                monthly_track_data[experiment][basin][storm_type] = {}
+                # Retrieve mask from the iterand basin to determine if TCs are being searched for here
+                basin_mask = basin_masks[basin]
+                # Get pseudonym for iterand basin data
+                df = track_data[model_name][storm_type][experiment]['unique'].copy().sort_values('time')
+                # Iterate over each month in the DataFrame
+                for month, month_data in df.groupby(df['time'].dt.strftime('%m')):
+                    # Define helper functions to retrieve the closest GCM data point to the iterand TC center
+                    find_lon = lambda x: basin_mask.grid_xt.values[(np.abs(basin_mask.grid_xt.values - x)).argmin()]
+                    find_lat = lambda y: basin_mask.grid_yt.values[(np.abs(basin_mask.grid_yt.values - y)).argmin()]
+                    # Save the GCM data point coordinates
+                    month_data['grid_xt'] = month_data['center_lon'].apply(find_lon)
+                    month_data['grid_yt'] = month_data['center_lat'].apply(find_lat)
+                    # Retrieve the mask data
+                    month_data['mask'] = month_data.apply(lambda c: basin_mask.sel(grid_xt=c['grid_xt'], 
+                                                                                   grid_yt=c['grid_yt'], method='nearest').item(), axis=1)
+                    # If the mask data is 1, TC is in the iterand basin, and keep it. Else, drop it
+                    monthly_track_data[experiment][basin][storm_type][month] = month_data.loc[month_data['mask'] == 1]
+
+    ''' Visualization. '''
+    fig, gs = plt.figure(figsize=(14, 4), dpi=144), matplotlib.gridspec.GridSpec(nrows=2, ncols=4, wspace=0.25, hspace=0.5)
+    
+    axes = {}
+    ax_count = 0
+    for i in range(0, gs.nrows):
+        for j in range(0, gs.ncols):
+            sharey = axes['(0, 0)'] if (i > 0 or j > 0) else None
+            axes['({0}, {1})'.format(i, j)] = fig.add_subplot(gs[i, j], sharey=sharey)
+            ax = axes['({0}, {1})'.format(i, j)]
+            basin_name = list(basins.keys())[ax_count]
+
+            statistics = {}
+    
+            for k, experiment in enumerate(experiments):
+                props = cycler(k)
+                statistics[experiment] = {storm_type: 0 for storm_type in storm_types}
+                for m, storm_type in enumerate(storm_types):
+                    months = [int(k) for k, v in monthly_track_data[experiment][basin_name][storm_type].items()]
+                    counts = [v['storm_id'].nunique()/(max(year_range) - min(year_range)) 
+                              for k, v in monthly_track_data[experiment][basin_name][storm_type].items()]
+        
+                    width = 0.4
+                    hatch = 'xxxx' if storm_type == 'C15w' else ''
+                    facecolor = 'white' if storm_type == 'C15w' else props['c']
+                    alpha = 1 if storm_type == 'C15w' else 0.625
+                    # Bar plot - first pass for hatching color
+                    ax.bar(np.array(months) + width*k, counts, width=width, fc=facecolor, ec=props['c'], alpha=alpha, hatch=hatch)
+                    # Redo for edges
+                    ax.bar(np.array(months) + width*k, counts, width=width, fc='none', ec='k', alpha=1)
+
+                    if m == 0:
+                        ax.set_xticks(months, [utilities.month_letter(l) for l in months])
+
+                    statistics[experiment][storm_type] = sum(counts)
+            
+            ax.set_title('{0}, {1}'.format(model_name, basin_name), loc='left', fontsize=10)
+            ax_count += 1
+
+            ax.annotate('{0}: CTL = {1:.1f}, EXP = {2:.1f}'.format('TS', statistics['control']['TS'], statistics['swishe']['TS']),
+                        xy=(0.03, 0.96), xycoords='axes fraction', fontsize=7, ha='left', va='top')
+            ax.annotate('{0}: CTL = {1:.1f}, EXP = {2:.1f}'.format('HU', statistics['control']['C15w'], statistics['swishe']['C15w']),
+                        xy=(0.03, 0.84), xycoords='axes fraction', fontsize=7, ha='left', va='top')
+
+    if savefig:
+        filename = 'model_{0}-storm_count_monthly-{1}-year_s{2}_e{3}.png'.format(model_name, storm_type, min(year_range), max(year_range))
+        plt.savefig(os.path.join('/tigress/GEOCLIM/gr7610/figs/climate', filename), dpi=300, bbox_inches='tight')
+
+    return monthly_track_data
+
+def superimpose_TC_contour(model_name: str,
+                           experiment_name: str,
+                           year_range: tuple[int, int] | list[int, int],
+                           ax,
+                           month_range: tuple[int, int] | list[int, int] = (1, 12),
+                           projection = None,
+                           bin_resolution: int = 5,
+                           diagnostic: bool=False):
+
+    ''' Method to obtain a single contour level to superimpose on figures for delineating extent of TC activity. '''
+
+    # Obtain TC activity density for the given model and experiment over the year range provided
+    density = tc_analysis.TC_density(model_names=model_name, 
+                                     experiment_names=experiment_name, 
+                                     year_range=year_range, 
+                                     bin_resolution=bin_resolution,
+                                     month_range=month_range)
+    # Determine the contour level
+    contour_level = np.array([2**n for n in range(0, 4)])[0]
+    
+    if diagnostic:
+        print(f'[visualization.superimpose_TC_contour] Arguments: {locals()}')
+        print(f'[visualization.superimpose_TC_contour] Showing TC activity level at {contour_level} TCs per day per year.')
+
+    # Assign a projection if default not provided
+    projection = projection if projection else ccrs.PlateCarree()
+    # Plot the contour
+    im = ax.contour(density[model_name][experiment_name].columns,
+                    density[model_name][experiment_name].index,
+                    density[model_name][experiment_name], 
+                    levels=[contour_level], 
+                    colors='k',
+                    linestyles='--',
+                    alpha=0.5,
+                    zorder=999,
+                    transform=ccrs.PlateCarree())
+    
+    return ax
+
+def density_grid_old(data, model_names=['HIRAM', 'AM2.5', 'FLOR'], experiments=['control', 'swishe'], difference_order='rtl', bin_resolution=5, dpi=96):
     """
     Method to plot the daily spatial density of all TC occurrences given a track data dictionary. 
     See tc_analysis.py --> tc_track_data() for more information.
@@ -787,510 +1662,16 @@ def density_grid(data, model_names=['HIRAM', 'AM2.5', 'FLOR'], experiments=['con
                                        orientation='horizontal', cax=cax_difference, format=matplotlib.ticker.FuncFormatter(fmt))
     colorbar_difference.set_label('$\\Delta$(TC days per year per {0}$\degree$ bin)'.format(bin_resolution), labelpad=10)
 
-def pdf(data, models=['AM2.5', 'FLOR', 'HIRAM'], param='center_lat', num_bins=60, mode='pdf', dpi=144):
+def swishe_TC_overlay(model_names, storm_type='TS', years=None, experiments=['CTL1990s', 'CTL1990s_swishe'], FLOR_year_adjustment=1900, bin_resolution=2.5, dpi=144, savefig=False):
     
-    fig, ax = plt.subplots(figsize=(4, 3), dpi=dpi)
-    
-    # Define list of colors (one color per model) and line styles (one linestyle per experiment)
-    colors = ['b', 'g', 'm']
-    linestyles = ['-', '--']
-    
-    # Collect data for output counts
-    counts = {model: {} for model in models}
+    # Change dpi to publication quality if figure is being saved
+    dpi = 300 if savefig else dpi
 
-    # Obtain maximum values from histogram distributions
-    vmax = 0
-    # Save label names
-    legend_labels = []
-    # Iterate over all models and experiments
-    for model_index, model in enumerate(models):
-        for experiment_index, experiment in enumerate(data[model].keys()):
-            # Get unique values for the parameter passed
-            out = data[model][experiment]['unique'][param].dropna()
-            # Filter out nans and infs
-            out = out.loc[np.isfinite(out.values)]
-            
-            legend_labels.append('{0}, {1}'.format(model, experiment))
-            bw_method = 0.1 if param == 'center_lat' else 0.25
-            pd.DataFrame(out).plot.kde(bw_method=bw_method, lw=2.5, color=colors[model_index], linestyle=linestyles[experiment_index],
-                                       legend=False, ax=ax, zorder=5)
-            if param not in ['center_lat']:
-                ax.axvline(np.nanmedian(out), lw=1, alpha=0.375, color=colors[model_index], linestyle=linestyles[experiment_index], zorder=1, label='_nolegend_')
-            
-            # Get bin values and bin edges, don't plot
-            n, bins, _ = ax.hist(out, bins=num_bins, histtype=u'step', density=True, lw=0, label='_nolegend_') 
-            # Incorporate mutiplicative factor - if mode == 'full_count', factor = length of data; else, factor = 1. The former gives you a full count.
-            factor = len(out) if mode == 'full_count' else 1
-            # Plot the distribution
-            # ax.plot(bins[:-1], n*factor, lw=2.5, color=colors[model_index], linestyle=linestyles[experiment_index], 
-            #         label='{0}, {1}'.format(model, experiment))
-            # Check to see if number of entries for a given bin exceeds the maximum (vmax)
-            vmax = np.nanmax(n*factor) if np.nanmax(n*factor) > vmax else vmax
-            # Add data length to counts
-            counts[model][experiment] = {'bins': bins, 'counts': n*len(out), 'median': np.median(out), 'std': np.nanstd(out)}
-            
-    # Adjust axis limits: handle limit differently for center_lat to allow for inline legend
-    if param == 'max_wind':
-        ax.set_xlim([10, 50])
-    elif param == 'min_slp':
-        ax.set_xlim([900, 1020])
-    ax.set_ylim([0, 1.1*vmax])
-    if param == 'center_lat':
-        # Curb latitudinal extent of TC monitoring to midlatitude extrema
-        ax.set_xlim([-60, 60])
-    elif param == 'duration':
-        # Storms lasting > 30 d are unrealistic
-        ax.set_xlim([0, 30])
-    
-    # Case-by-case dictionary for improved plot labeling (log the long names)
-    param_names = {'center_lat': 'Latitude', 'max_wind': 'Maximum 10 m wind speed [m s$^{-1}$]', 'min_slp': 'Minimum sea level pressure [hPa]'}
-    # Plot labeling and formatting
-    ax.set_xlabel(param_names[param], labelpad=10)
-    ax.set_ylabel('Probability density', labelpad=10)
-    ax.yaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter('%.2f'))
-    # Handle legend plotting differently for center_lat to allow for space inline
-    if param == 'center_lat':
-        ax.legend(legend_labels, frameon=False, loc='upper left', prop={'size': 8})
-    else:
-        ax.legend(legend_labels, frameon=False, loc='best', prop={'size': 8})
-        
-    # Print median and standard deviations for all model-experiment combinations
-    for model in counts.keys():
-        for experiment in counts[model].keys():
-            print('{0} - {1}, {2}: median: {3:.2f}, std.dev: {4:.2f}'.format(param, model, experiment,
-                                                                             counts[model][experiment]['median'], counts[model][experiment]['std']))
-        
-    return counts
+    # Make sure the model input is a list
+    model_names = [model_names] if type(model_names) is not list else model_names
 
-def intensity_distribution_plot(data, intensity_metric='max_wind', intensity_bin=None,
-                                bin_width=4, rolling_mean_window=6, interpolation_factor=4, 
-                                plot_histogram=False, dpi=96, print_statistics=False):
-    
-    def rolling_mean(a, window=3):
-        ret = np.cumsum(a, dtype=float)
-        ret[window:] = ret[window:] - ret[:-window]
-        return ret[window - 1:] / window
-
-    # Get model names from the input data
-    models = data.keys()
-    # Collect iterand extrema
-    extrema = {'x': {'min': np.nan, 'max': np.nan},
-               'y': {'min': np.nan, 'max': np.nan}}
-    # Collect processed data
-    output = {}
-    
-    # Define figure as a function of rows (different models)
-    fig, axes = plt.subplots(figsize=(4, 2*len(models)), dpi=dpi, nrows=len(models))
-    # Iterate over each model
-    for model_index, model in enumerate(models):
-        # Initialize dictionary at model level to collect processed data
-        output[model] = {}
-        # Get experiment names from the input data
-        experiments = data[model].keys()
-        # Define the model-specific axis
-        ax = fig.axes[model_index]
-        # Iterate over each experiment
-        for experiment_index, experiment in enumerate(experiments):
-            # Get iterand color scheme
-            color, linestyle = cycler(experiment_index)['c'], cycler(experiment_index)['ls']
-            # Get intensity data for a given model and experiment configuration for the chosen metric
-            if intensity_bin:
-                # Get all storm data
-                entries = data[model][experiment]['raw']
-                # Filter by intensity bin
-                intensity_bin_entries = entries.loc[entries['intensity_bin'] == intensity_bin]
-                # Initialize list to hold strongest storm entry for each storm, to be concatenated lated
-                entry_list = []
-                # For each unique storm, get the strongest entry corresponding to the given intensity bin
-                for unique_storm_id in intensity_bin_entries['storm_id'].unique():
-                    # Get unique storm entry
-                    unique_storm = intensity_bin_entries.loc[intensity_bin_entries['storm_id'] == unique_storm_id]
-                    # Get metric-dependent maximum value
-                    
-                    if intensity_metric == 'min_slp':
-                        entry = unique_storm.loc[unique_storm[intensity_metric] == unique_storm[intensity_metric].min()][intensity_metric]
-                    else:
-                        entry = unique_storm.loc[unique_storm[intensity_metric] == unique_storm[intensity_metric].max()][intensity_metric]
-                    entry_list.append(entry)
-                # Concatenate entries
-                x = pd.concat(entry_list)
-            else:
-                x = data[model][experiment]['unique'][intensity_metric]
-            # Collect processed data for the iterand configuration
-            output[model][experiment] = x
-            # Define extrema for the intensity distribution. Make them integers for cleaner processing.
-            experiment_vmin_x, experiment_vmax_x = np.round(np.nanmin(x)), np.round(np.nanmax(x))
-            # Round to nearest bin width for cleaner divisions. 
-            # Note the decrement and increment for floor and ceiling, respectively, to foresee domain reductions due to rolling mean.
-            experiment_vmin_x = bin_width * np.floor(experiment_vmin_x/bin_width) - (rolling_mean_window // 2) * bin_width # set to floor to capture minima
-            experiment_vmax_x = bin_width * np.ceil(experiment_vmax_x/bin_width) + (rolling_mean_window // 2) * bin_width # set to ceiling to capture maxima
-            # Define bins for histogram definition
-            bins = np.arange(experiment_vmin_x, experiment_vmax_x + bin_width, bin_width)
-            # Plot histogram and extract outputs for future interpolation
-            histogram_alpha = 0.25 if plot_histogram else 0
-            histogram_output = ax.hist(x, density=True, bins=bins, histtype='stepfilled',
-                                       facecolor=color, align='left', alpha=histogram_alpha, zorder=1)
-            densities, bin_locations = histogram_output[0], histogram_output[1]
-            
-            ''' Derive an interpolated pseudo-probability density function. '''
-            # Derive the interpolation number (length of bins multiplied by some factor)
-            interpolation_number = len(bins) * interpolation_factor
-            # Derive the interpolation bin locations
-            interpolated_bins = np.arange(experiment_vmin_x, experiment_vmax_x + bin_width / interpolation_factor, bin_width / interpolation_factor)
-            # Interpolate the histogram-derived densities to the interpolated bin locations
-            interpolated_densities = np.interp(interpolated_bins, bin_locations[:-1], densities)
-            # Redefine bins for the rolling mean
-            interpolated_bins_rolling = interpolated_bins[(rolling_mean_window//2):-(rolling_mean_window//2 - 1)]
-            # Apply a rolling mean (centered) to the densities
-            interpolated_densities_rolling = rolling_mean(interpolated_densities, rolling_mean_window)
-            # Plot the interpolated data. Shift the bin locations by half the bin width
-            ax.plot(interpolated_bins_rolling, interpolated_densities_rolling,
-                    color=color, linewidth=3, zorder=10, label=experiment)
-            
-            # Get median value
-            median = np.median(x)
-            median_density = interpolated_densities_rolling[np.argmin(np.abs(interpolated_bins_rolling - median))]
-            # Plot the median value
-            ax.plot([median, median], [0, median_density], lw=1, ls=':', color=color)
-        
-            # Check experiment extrema against overall extrema
-            extrema['x']['min'] = experiment_vmin_x if (np.isnan(extrema['x']['min']) or experiment_vmin_x < extrema['x']['min']) else extrema['x']['min']
-            extrema['x']['max'] = experiment_vmax_x if (np.isnan(extrema['x']['max']) or experiment_vmax_x > extrema['x']['max']) else extrema['x']['max']
-            extrema['y']['min'] = min(densities) if (np.isnan(extrema['y']['min']) or min(densities) < extrema['y']['min']) else extrema['y']['min']
-            extrema['y']['max'] = max(densities) if (np.isnan(extrema['y']['max']) or max(densities) > extrema['y']['max']) else extrema['y']['max']
-    
-    # Override extrema for winds.
-    if intensity_metric == 'max_wind':
-        extrema['x']['min'] = 0
-        
-    ''' Apply extrema to define axis limits. '''
-    # Iterate over each model
-    for model_index, model in enumerate(models):
-        # Define the model-specific axis
-        ax = fig.axes[model_index]
-        # Add annotation to show model name
-        ax.annotate(model, (0.03, 0.94), xycoords='axes fraction', fontsize=10, va='top')
-        # Iterate over each experiment
-        for experiment_index, experiment in enumerate(experiments):
-            # Set minor tick locations automatically
-            ax.xaxis.set_minor_locator(matplotlib.ticker.AutoMinorLocator())
-            # Print statistics if chosen
-            if print_statistics:
-                sample_count = len(data[model][experiment]['unique'][intensity_metric])
-                ax.annotate('N({0}) = {1}'.format(experiment, sample_count), (0.98, 0.95 - experiment_index*0.08), xycoords='axes fraction', 
-                            fontsize=8, ha='right', va='top')
-            # Ensure that subplot limits are defined by the data extrema
-            ax.set_xlim([extrema['x']['min'], extrema['x']['max']])
-            ax.set_ylim([extrema['y']['min'], extrema['y']['max']])
-            # Only plot the legend for the top subplot
-            if model_index == 0:
-                ax.legend(frameon=False, ncols=len(experiments), loc='upper center', bbox_to_anchor=(0.5, 1.3))
-            if model_index == len(models) - 1:
-                long_name, units = field_properties(intensity_metric)
-                ax.set_xlabel("{0} [{1}]".format(long_name, units))
-                
-    return output
-
-def swishe_frequency(models=['HIRAM', 'AM2.5', 'FLOR'], dpi=144, set_visible=True):
-    """Plot frequency of SWISHE filter application using the 'swfq' diagnostic on 'atmos_4xdaily' files for SWISHE runs.
-
-    Args:
-        models (list, optional): list of models to visualize data for. Defaults to ['FLOR', 'HIRAM'].
-    """
-    # Initialize figure and GridSpec object with the number of rows equal to the number of models plotted
-    fig, gs = plt.figure(figsize=(6, 2*len(models)), dpi=dpi), matplotlib.gridspec.GridSpec(nrows=len(models), ncols=1, hspace=0.75)
-    # Define colormap and normalization
-    cmap, norm = cmap_white_adjust('Reds'), matplotlib.colors.BoundaryNorm(np.linspace(0, 2, 11), 256)
-    # Filename dictionary
-    filenames = {'HIRAM': 'model_HIRAM-exp_CTL1990s_swishe-type_atmos-var_swfq-mean_year-resample-101_150.nc',
-                 'AM2.5': 'model_AM2.5-exp_CTL1990s_swishe-type_atmos-var_swfq-mean_year-resample-full-101_150.nc',
-                 'FLOR': 'model_FLOR-exp_CTL1990s_swishe-type_atmos-var_swfq-mean_year-resample-full-2050_2100.nc'}
-    # Iterate over each model, using 'row' as the indexer
-    for row, model in enumerate(models):
-        # Get directory name for data
-        dirname = '/tigress/GEOCLIM/gr7610/analysis/model_out'
-        # Get filenames for data
-        filename = os.path.join(dirname, filenames[model])
-        # Access the data, targeting 'swfq' to get SWISHE application frequency
-        data = xr.open_dataset(filename)['swfq']
-        # Use the basemap() method to obtain the base map figure upon which data is plotted
-        fig, gs, ax, proj = basemap(fig, gs, model, 'SWISHE application frequency', (data.time.min().dt.year.item(), data.time.max().dt.year.item()), row_num=row, land=True)
-        # Plot contoured data at 10 levels over a 2% range (intervals of 0.2% for legibility)
-        im = ax.contourf(data.grid_xt, data.grid_yt, 100*data.sum(dim='time')/len(data.time.values), 
-                         levels=10, cmap=cmap, norm=norm, vmin=0, vmax=2, transform=proj)
-        # If row isn't the last one, hide the xlabel since axes are implicitly shared and equal
-        if row != gs.nrows-1:
-            ax.set_xlabel('')
-        # Plot the colorbar
-        cax = ax.inset_axes([1.03, 0, 0.03, 1])
-        colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax)
-        
-        long_name, units = field_properties('swfq')
-        colorbar.set_label('{0}'.format(units), rotation=270, labelpad=20)
-        
-    if not set_visible:
-        plt.clf()
-        
-    return data
-
-def basemap(fig, gs, model_name, experiment, year_range=None, row_num=0, col_num=0, extent=[0, 359, -60, 60], land=False,
-            xlabel=True, ylabel=True, subplot_title=True, label_fontsize=11):
-    """
-    Function to provide template map upon which geospatial data can be plotted.
-
-    Args:
-        fig (matplotlib Figure object): Figure object.
-        gs (matplotlib GridSpec object): GridSpec object.
-        model_name (str): name of model, used for annotation.
-        experiment (str): name of experiment, used for annotation.
-        year_range (list or tuple): 2-item list with minimum and maximum years.
-        row_num (int, optional): row number for use in a GridSpec object. Defaults to 0.
-        col_num (int, optional): column number for use in a GridSpec object. Defaults to 0.
-        extent (list, optional): 4-item geospatial extent list, with parameters of [minimum longitude, maximum longitude, minimum latitude, maximum latitude]. 
-                                 Defaults to [0, 359, -60, 60].
-        land (bool, optional): determine whether or not to add the land feature. Useful if land mask is used for data. Defaults to False.
-
-    Returns:
-        fig (matplotlib Figure object): Figure object.
-        gs (matplotlib GridSpec object): GridSpec object.
-        ax (matplotlib Subplot object): Subplot object.
-        proj (Cartopy projection object): Cartopy projection object.
-    """
-    
-    # Define longitudinal offset
-    longitude_offset = 180
-    # Define projections (working and reference projections)
-    proj, proj_ref = ccrs.PlateCarree(central_longitude=longitude_offset), ccrs.PlateCarree()
-    
-    # Initialize subplot
-    ax = fig.add_subplot(gs[row_num, col_num], projection=proj)
-    # Define extent
-    ax.set_extent(extent, crs=proj_ref)
-    
-    if land:
-        ax.add_feature(cartopy.feature.LAND, color=(0.5, 0.5, 0.5, 0.25), zorder=99)
-    ax.coastlines()
-    
-    # Subplot labeling
-    title_y = 1.05
-    # Define year range string plotting
-    year_range_str = ', {0} to {1}'.format(min(year_range), max(year_range)) if year_range else ''
-    # Set left-hand side to be {model name}, {min year} to {max year}
-    if subplot_title:
-        subplot_title_model = ax.annotate('{0}{1}'.format(model_name, year_range_str),
-                                          (0, title_y), va='baseline', ha='left', xycoords='axes fraction', fontsize=label_fontsize)
-    # Set right-hand side to be {experiment name}
-    subplot_title_experiment = ax.annotate('{0}'.format(experiment), (1, title_y), va='baseline', ha='right', 
-                                           xycoords='axes fraction', fontsize=label_fontsize)
-
-    # Initialize gridline parameters
-    gridline_x_step, gridline_y_step = 60, 20
-    gridline_minor_step = 10
-    # Define major ticks
-    gridline_x_major, gridline_y_major = [np.arange(extent[0] - longitude_offset, 
-                                                    extent[1] - longitude_offset + gridline_x_step, 
-                                                    gridline_x_step), 
-                                          np.arange(extent[2], 
-                                                    extent[3] + gridline_y_step, 
-                                                    gridline_y_step)]
-    gridline_x_minor, gridline_y_minor = [np.arange(extent[0] - longitude_offset, 
-                                                    extent[1] - longitude_offset + gridline_minor_step, 
-                                                    gridline_minor_step), 
-                                          np.arange(extent[2], 
-                                                    extent[3] + gridline_minor_step, 
-                                                    gridline_minor_step)]
-    
-    # Draw gridlines
-    gl = ax.gridlines(draw_labels=True, xlocs=[], ylocs=[], linewidth=0.5, color='k', alpha=0.25, linestyle='-')
-    gl.top_labels, gl.right_labels = False, False
-    # Define ticks
-    ax.set_xticks(gridline_x_major, crs=proj)
-    ax.set_yticks(gridline_y_major, [], crs=proj)
-    ax.set_xticklabels([str(x + 180) for x in gridline_x_major]) # override tick values that are projection-dependent
-    # Set minor ticks
-    ax.xaxis.set_minor_locator(matplotlib.ticker.FixedLocator(gridline_x_minor))
-    ax.yaxis.set_minor_locator(matplotlib.ticker.FixedLocator(gridline_y_minor))
-    # Axis labels
-    if xlabel:
-        ax.set_xlabel('Longitude')
-    if ylabel:
-        ax.set_ylabel('Latitude')
-    ax.set_extent(extent, crs=proj_ref)
-
-    return fig, gs, ax, proj_ref
-
-def basins(visualize=False):
-    
-    basins = {'global': [1, 360, -60, 59],
-             'NI': [40, 100, 0, 30],
-             'SI': [40, 120, -40, 0],
-             'WP': [100, 180, 0, 40],
-             'SP': [120, 260, -40, 0],
-             'EP': [180, 260, 0, 40],
-             'NA': [260, 360, 0, 40],
-             'SA': [300, 360, -40, 0],}
-    
-    # Generate masks to filter by basin
-    basin_masks = {}
-    grid = xr.open_dataset('/tigress/GEOCLIM/gr7610/tools/AM2.5_atmos_area.nc')
-    for i, basin_data in enumerate(basins.items()):
-        basin, basin_extent = basin_data
-        mask = np.full(shape=(len(grid.grid_yt), len(grid.grid_xt)), fill_value=0)
-
-        for j, y in enumerate(grid.grid_yt.values):
-            for i, x in enumerate(grid.grid_xt.values):
-                # Rectangular basins
-                if (x >= basin_extent[0]) and (x < basin_extent[1]) and (y >= basin_extent[2]) and (y < basin_extent[3]):
-                    mask[j, i] = 1
-                # Special cases - handle the Central American isthmus
-                if basin in ['EP', 'NA']:
-                    x0, x1, y0, y1 = [260, 295, 0, 22]
-                    m = (y0 - y1)/(x1 - x0)
-                    f_y = m*(grid.grid_xt.values - x1) + y0
-                    if (x >= x0) and (x < x1) and (y >= y0) and (y < f_y[i]):
-                        mask[j, i] = 1 if basin == 'EP' else 0
-            basin_masks[basin] = xr.DataArray(data=mask,
-                                              dims=grid.dims,
-                                              coords=grid.coords)
-
-    if visualize:
-        proj, proj_ref = ccrs.PlateCarree(central_longitude=180), ccrs.PlateCarree()
-        fig, gs = plt.figure(figsize=(8, 3), dpi=300), matplotlib.gridspec.GridSpec(nrows=1, ncols=1)
-
-        fig, gs, ax, proj_ref = basemap(fig, gs, 'Basins', '', row_num=0, col_num=0, extent=[0, 359, -60, 60], land=True)
-        
-        prop_cycle = plt.rcParams['axes.prop_cycle']
-        colors = prop_cycle.by_key()['color']
-        
-        ax.coastlines()
-        for i, basin_data in enumerate(basins.items()):
-            basin, basin_extent = basin_data
-            text_offset_horizontal = 40 if basin == 'NA' else 0
-            if basin in ['EP', 'NA']:
-                if basin == 'EP':
-                    xy = [(180, 40), (260, 40), (260, 22), (295, 0), (180, 0)]
-                    patch = matplotlib.patches.Polygon(xy, closed=True, fc='none', lw=2, ec=colors[i], transform=proj_ref, zorder=i+10)
-                else:
-                    xy = [(260, 40), (360, 40), (360, 0), (295, 0), (260, 22)]
-                    patch = matplotlib.patches.Polygon(xy, closed=True, fc='none', lw=2, ec=colors[i], transform=proj_ref, zorder=i+10)
-            else:
-                patch = matplotlib.patches.Rectangle(xy=(basin_extent[0], basin_extent[2]),
-                                                    width=(basin_extent[1] - basin_extent[0]), height=(basin_extent[3] - basin_extent[2]), 
-                                                    fc='none', lw=2, ec=colors[i], transform=proj_ref, zorder=i+10)
-            ax.annotate(text=basin, xy=(basin_extent[0], basin_extent[2]), xytext=(5 + text_offset_horizontal, 6), 
-                        textcoords='offset points', transform=proj_ref, bbox=dict(facecolor=(1, 1, 1, 0.9), ec='None'))
-            ax.add_patch(patch)
-        ax.set_extent([0, 359, -60, 60])
-        plt.show()
-        
-    return basins, basin_masks
-
-def tc_activity(track_data, model_name, experiments=['control', 'swishe'], storm_types=['TS', 'C15w'], 
-                year_range=None, savefig=False):
-    
-    ''' Function to generate monthly climatologies of TC activity, subdivided per basin. See the script snippet below for recommended function use. '''
-    
-    ####### Begin recommended run snippet. ##########
-    monthly_track_data = {}
-    # for model in ['HIRAM', 'AM2.5', 'FLOR']:
-    #     year_range = (101, 150) if model in ['HIRAM', 'AM2.5'] else (150, 200)
-    #     track_data = {model: {}}
-    #     for storm_type in ['TS', 'C15w']:
-    #         temp = tc_analysis.tc_track_data([model], ['control', 'swishe'], storm_type=storm_type, year_range=year_range)
-    #         track_data[model][storm_type] = temp[model]
-    #         monthly_track_data[model] = track_data
-    #     tc_activity(track_data, model, experiments=['control', 'swishe'], storm_types=['TS', 'C15w'], year_range=year_range, savefig=True)
-    ####### End recommended run snippet. ##########
-    
-    ''' Data loading. '''
-    # Import basin data
-    basins, basin_masks = basins()
-
-    ''' Data processing. '''
-    # Set up dictionary to hold monthly-grouped track data for a given model
-    monthly_track_data = {}
-    
-    # Iterate over each experiment
-    for experiment in experiments:
-        monthly_track_data[experiment] = {}
-        # Iterate over each basin
-        for basin in basins.keys():
-            monthly_track_data[experiment][basin] = {}
-            # Iterate over each storm type
-            for storm_type in storm_types:
-                monthly_track_data[experiment][basin][storm_type] = {}
-                # Retrieve mask from the iterand basin to determine if TCs are being searched for here
-                basin_mask = basin_masks[basin]
-                # Get pseudonym for iterand basin data
-                df = track_data[model_name][storm_type][experiment]['unique'].copy().sort_values('time')
-                # Iterate over each month in the DataFrame
-                for month, month_data in df.groupby(df['time'].dt.strftime('%m')):
-                    # Define helper functions to retrieve the closest GCM data point to the iterand TC center
-                    find_lon = lambda x: basin_mask.grid_xt.values[(np.abs(basin_mask.grid_xt.values - x)).argmin()]
-                    find_lat = lambda y: basin_mask.grid_yt.values[(np.abs(basin_mask.grid_yt.values - y)).argmin()]
-                    # Save the GCM data point coordinates
-                    month_data['grid_xt'] = month_data['center_lon'].apply(find_lon)
-                    month_data['grid_yt'] = month_data['center_lat'].apply(find_lat)
-                    # Retrieve the mask data
-                    month_data['mask'] = month_data.apply(lambda c: basin_mask.sel(grid_xt=c['grid_xt'], 
-                                                                                   grid_yt=c['grid_yt'], method='nearest').item(), axis=1)
-                    # If the mask data is 1, TC is in the iterand basin, and keep it. Else, drop it
-                    monthly_track_data[experiment][basin][storm_type][month] = month_data.loc[month_data['mask'] == 1]
-
-    ''' Visualization. '''
-    fig, gs = plt.figure(figsize=(14, 4), dpi=144), matplotlib.gridspec.GridSpec(nrows=2, ncols=4, wspace=0.25, hspace=0.5)
-    
-    axes = {}
-    ax_count = 0
-    for i in range(0, gs.nrows):
-        for j in range(0, gs.ncols):
-            sharey = axes['(0, 0)'] if (i > 0 or j > 0) else None
-            axes['({0}, {1})'.format(i, j)] = fig.add_subplot(gs[i, j], sharey=sharey)
-            ax = axes['({0}, {1})'.format(i, j)]
-            basin_name = list(basins.keys())[ax_count]
-
-            statistics = {}
-    
-            for k, experiment in enumerate(experiments):
-                props = cycler(k)
-                statistics[experiment] = {storm_type: 0 for storm_type in storm_types}
-                for m, storm_type in enumerate(storm_types):
-                    months = [int(k) for k, v in monthly_track_data[experiment][basin_name][storm_type].items()]
-                    counts = [v['storm_id'].nunique()/(max(year_range) - min(year_range)) 
-                              for k, v in monthly_track_data[experiment][basin_name][storm_type].items()]
-        
-                    width = 0.4
-                    hatch = 'xxxx' if storm_type == 'C15w' else ''
-                    facecolor = 'white' if storm_type == 'C15w' else props['c']
-                    alpha = 1 if storm_type == 'C15w' else 0.625
-                    # Bar plot - first pass for hatching color
-                    ax.bar(np.array(months) + width*k, counts, width=width, fc=facecolor, ec=props['c'], alpha=alpha, hatch=hatch)
-                    # Redo for edges
-                    ax.bar(np.array(months) + width*k, counts, width=width, fc='none', ec='k', alpha=1)
-
-                    if m == 0:
-                        ax.set_xticks(months, [utilities.month_letter(l) for l in months])
-
-                    statistics[experiment][storm_type] = sum(counts)
-            
-            ax.set_title('{0}, {1}'.format(model_name, basin_name), loc='left', fontsize=10)
-            ax_count += 1
-
-            ax.annotate('{0}: CTL = {1:.1f}, EXP = {2:.1f}'.format('TS', statistics['control']['TS'], statistics['swishe']['TS']),
-                        xy=(0.03, 0.96), xycoords='axes fraction', fontsize=7, ha='left', va='top')
-            ax.annotate('{0}: CTL = {1:.1f}, EXP = {2:.1f}'.format('HU', statistics['control']['C15w'], statistics['swishe']['C15w']),
-                        xy=(0.03, 0.84), xycoords='axes fraction', fontsize=7, ha='left', va='top')
-
-    if savefig:
-        filename = 'model_{0}-storm_count_monthly-{1}-year_s{2}_e{3}.png'.format(model_name, storm_type, min(year_range), max(year_range))
-        plt.savefig(os.path.join('/tigress/GEOCLIM/gr7610/figs/climate', filename), dpi=300, bbox_inches='tight')
-
-    return monthly_track_data
-
-def swishe_TC_overlay(model_name, storm_type='TS', years=None, experiments=['CTL1990s', 'CTL1990s_swishe'], FLOR_year_adjustment=1900, bin_resolution=2.5, dpi=144):
-    
     start_year, end_year = min(years), max(years)
-    track_data = tc_analysis.tc_track_data([model_name], experiments, year_range=(start_year, end_year), storm_type=storm_type, FLOR_year_adjustment=FLOR_year_adjustment)
+    track_data = tc_analysis.tc_track_data(model_names, experiments, year_range=(start_year, end_year), storm_type=storm_type, FLOR_year_adjustment=FLOR_year_adjustment)
     
     ''' Data processing. '''
     # Initialize dictionary for spatial density
@@ -1325,8 +1706,9 @@ def swishe_TC_overlay(model_name, storm_type='TS', years=None, experiments=['CTL
             
     # Collect processed density maps. Note: the difference will be calculated for the last subplot.
     densities = {}
+    swishe_densities = {}
     # Pass 1: Iterate through experiments to get each experiment's density data.
-    for model in [model_name]:
+    for model in model_names:
         # Initialize subdictionary for the iterand model
         densities[model] = {}
         # Iterate over each given experiment
@@ -1339,70 +1721,34 @@ def swishe_TC_overlay(model_name, storm_type='TS', years=None, experiments=['CTL
             # Normalize by number of years and by day (assume 6-hourly data, so 6 x 4 = 1 day)
             densities[model][experiment] = v.T/(end_year - start_year)
             
-    fig, gs = plt.figure(figsize=(8, 3), dpi=dpi), matplotlib.gridspec.GridSpec(nrows=1, ncols=1)
-    fig, gs, ax, proj_ref = basemap(fig, gs, model_name, 'TC density (blue) & SWISHE application (red)', 
-                                    year_range=(start_year + FLOR_year_adjustment, end_year + FLOR_year_adjustment), land=True)
+    nrows = len(model_names)
+    fig, gs = plt.figure(figsize=(8, 3*nrows), dpi=dpi), matplotlib.gridspec.GridSpec(nrows=nrows, ncols=1, hspace=0.375)
+    for row, model_name in enumerate(model_names):
 
-    contours = np.arange(0, 1.6 + 0.2, 0.2)
-    norm = matplotlib.colors.BoundaryNorm(contours, 256)
-    cmap = cmap_white_adjust('Blues', levels=len(contours)-1)
+        plot_title = 'TC density (blue) & SWISHE application (red)' if row == 0 else ''
+        FLOR_year_adjust = FLOR_year_adjustment if model_name == 'FLOR' else 0
+        _, _, ax, proj_ref = basemap(fig, gs, model_name, plot_title, row_num=row,
+                                     year_range=(start_year + FLOR_year_adjust, end_year + FLOR_year_adjust), land=True)
 
-    im = ax.contourf(x, y, densities[model_name][experiments[0]], transform=proj_ref, norm=norm, cmap=cmap, levels=len(contours)-1)
+        norm = matplotlib.colors.BoundaryNorm(np.array([0, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.6, 0.8, 1.2, 1.6, 3.2]), 256)
+        contours = norm.boundaries
+        cmap = cmap_white_adjust('Blues', levels=len(contours)-1)
 
-    swishe_contours = swishe_frequency(models=[model_name], dpi=144, set_visible=False)
-    im_swishe = ax.contour(swishe_contours.grid_xt, swishe_contours.grid_yt, 100*swishe_contours.sum(dim='time')/len(swishe_contours.time.values), 
-                           levels=contours[1:], cmap='Reds', norm=norm, vmin=0, vmax=max(contours), linewidths=1.5, transform=proj_ref)
-    
-    cax = ax.inset_axes([1.03, 0, 0.02, 1])
-    colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax)
-    colorbar.set_label('% of time with TC', labelpad=15, rotation=270)
-    
-def circular_subplot(fig, axes, data, norm, cmap, mask_degrees=10, plot_style='pcolormesh'):
+        # im = ax.pcolormesh(x, y, densities[model_name][experiments[0]], transform=proj_ref, norm=log_norm, cmap=cmap)
+        im = ax.contourf(x, y, densities[model_name][experiments[0]], transform=proj_ref, norm=norm, cmap=cmap, levels=contours[1:])
 
-    '''
-    Constructs a circular subplot centered on TC centers, akin to Figure 2 in Fischer et al. (2018).
-    Reference: 10.1175/MWR-D-17-0239.1
-    '''
+        swishe_contours = swishe_frequency(models=[model_name], dpi=144, set_visible=False)
+        swishe_densities[model_name] = swishe_contours
+        im_swishe = ax.contour(swishe_contours.grid_xt, swishe_contours.grid_yt, 100*swishe_contours.sum(dim='time')/len(swishe_contours.time.values),
+                               levels=contours[1:], cmap='Reds', norm=norm, linewidths=1.5, transform=proj_ref)
+        
+        cax = ax.inset_axes([1.03, 0, 0.02, 1])
+        colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax)
+        colorbar.set_label('% of time with TC', labelpad=15, rotation=270)
 
-    # Construct a clipping patch to hide the pcolormesh
-    mask_num_vertices = 100
-    theta = np.linspace(0, 2*np.pi, mask_num_vertices)
-    center, radius = [0.5, 0.5], 0.5
-    verts = np.vstack([np.sin(theta), np.cos(theta)]).T
-    mask_patch = matplotlib.path.Path(verts * radius + center)
+    if savefig:
+        dirname = '/projects/GEOCLIM/gr7610/figs/swishe-small_scale'
+        filename = 'swishe_TC_overlay-s{0}_e{1}.png'.format(min(years), max(years))
+        fig.savefig(os.path.join(dirname, filename), dpi=dpi, bbox_inches='tight')
 
-    # Plot the data and mask it
-    if plot_style == 'pcolormesh':
-        im = axes.pcolormesh(data.grid_xt, data.grid_yt, data, norm=norm, cmap=cmap, clip_path=(mask_patch, axes.transAxes))
-    else:
-        im = axes.contourf(data.grid_xt, data.grid_yt, data, norm=norm, cmap=cmap, clip_path=(mask_patch, axes.transAxes))
-    axes.set_xlim([-mask_degrees, mask_degrees])
-    axes.set_ylim(axes.get_xlim())
-    axes.set_aspect('equal')
-    axes.set_axis_off()
-
-    # Build a polar grid
-    ax_polar = axes.inset_axes([0, 0, 1, 1], polar=True, frameon=False)
-    ax_polar.set_rmax(mask_degrees)
-    ax_polar.set_yticks(np.arange(0, mask_degrees, 2))
-    ax_polar.set_yticklabels([])
-    ax_polar.set_xticks([0, np.pi/2, np.pi, 3*np.pi/2], ['N', '', '', ''])
-    ax_polar.set_theta_zero_location('N')
-    ax_polar.set_theta_direction(-1)
-    ax_polar.grid(True, c='k', linewidth=0.5, linestyle='--', alpha=0.25)
-    
-    # Construct a clipping patch to hide the pcolormesh
-    mask_num_vertices = 100
-    theta = np.linspace(0, 2*np.pi, mask_num_vertices)
-    center, radius = [0, 0], mask_degrees
-    verts = np.vstack([theta, [radius]*mask_num_vertices]).T
-    ring_patch = matplotlib.path.Path(verts)
-    patch = matplotlib.patches.PathPatch(ring_patch, facecolor='none', edgecolor='black', linewidth=1.5)
-    # Add the patch to the axes
-    ax_polar.add_patch(patch)
-    # circ =  []
-    # circ.append(patch)
-    # coll = matplotlib.collections.PatchCollection(circ, zorder=10, linewidth=2, facecolor='none')
-    # axes.add_collection(coll)
-    
-    return axes
+    return fig, densities, swishe_densities
