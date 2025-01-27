@@ -16,6 +16,8 @@ from multiprocess import Pool
 import warnings
 warnings.filterwarnings("ignore")
 
+import track_TCs
+
 def directories(model, experiment, data_type='model_output'):
     
     """
@@ -563,7 +565,7 @@ def storm_snapshot(storm, mode='lmi'):
 
     return storm.iloc[[0]]
 
-def retrieve_tracked_TCs(model, experiment, storm_type, year_range, intensity_metric=None, intensity_threshold=None, config=None, diagnostic=False):
+def retrieve_tracked_TCs_OLD(model, experiment, storm_type, year_range, intensity_metric=None, intensity_threshold=None, config=None, diagnostic=False):
     
     '''
     Function to collect tracked TC data and add derived data, such as duration and storm speed.
@@ -714,6 +716,14 @@ def retrieve_tracked_TCs(model, experiment, storm_type, year_range, intensity_me
         
         return data
 
+def retrieve_tracked_TCs(model, experiment, storm_type, year_range, diagnostic=False):
+    
+    data = track_TCs.main(model_name=model, 
+                          experiment_name=experiment, 
+                          year_range=year_range)
+    
+    return data
+
 def file_counter(model_names=['AM2.5', 'FLOR', 'HIRAM'], num_files=10):
     """
     This method takes all tracked TCs from the Harris TC tracker and gets the ratio of SWISHE to control storms to ensure representative sampling for analytical methods.
@@ -766,6 +776,9 @@ def file_counter(model_names=['AM2.5', 'FLOR', 'HIRAM'], num_files=10):
             file_counts[model][experiment] = counts[model, 'file_count_{0}'.format(experiment)].to_dict()
         
     return file_counts
+
+
+    
 
 def land_mask(data, mask_type='land'):
     

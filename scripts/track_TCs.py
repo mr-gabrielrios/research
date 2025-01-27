@@ -28,18 +28,29 @@ def table_constructor(storm_number: str,
     storm_df['time'] = pd.to_datetime(storm_df['time'], format='%Y%m%d%H')
     # Derive storm_duration
     storm_df['duration'] = (storm_df['time'].max() - storm_df['time'].min()).total_seconds() / 86400
-    # Check for leap days - cftime is not handling them for compatibility with GCM outputs
-    has_leap_days = storm_df['time'].apply(lambda x: (x.month == 2) & (x.day == 29) & calendar.isleap(x.year))
+    # Check for leap dates - cftime is not handling them for compatibility with GCM outputs
+    # Note 1: if a storm timestamp falls on a leap day, skip it. 
+    # Note 2: If a storm timestamp falls on a leap year, handle it depending on whether it happens before or after leap day
+    # Note 2a: If before, do nothing. If after, add a day to it to account for the leap
+    has_leap_day = storm_df['time'].apply(lambda x: (x.month == 2) & (x.day == 29) & calendar.isleap(x.year))
+    is_after_leap_day = storm_df['time'].apply(lambda x: (x.month > 2) & calendar.isleap(x.year))
     # If a leap day is in the storm data, return null
-    if has_leap_days.sum() == 0:
-        # Create column with cftime time data type to allow for Pandas operations while retaining actual model date
-        storm_df['cftime'] = storm_df['time'].apply(lambda x: cftime.datetime(year=track_year,  
-                                                                              month=x.month, 
-                                                                              day=x.day, 
-                                                                              hour=x.hour, 
-                                                                              calendar='noleap', 
-                                                                              has_year_zero=True))
-    
+    # Else, create column with cftime time data type to allow for Pandas operations while retaining actual model date
+    if has_leap_day.sum() == 0:
+        # Add a day if the days are after a leap day to account for the leap
+        storm_df[is_after_leap_day]['cftime'] = storm_df[is_after_leap_day]['cftime'].apply(lambda x: cftime.datetime(year=x.year,  
+                                                                                              month=x.month,
+                                                                                              day=x.day,
+                                                                                              hour=x.hour,
+                                                                                              calendar='noleap',
+                                                                                              has_year_zero=True) + pd.Timedelta(1, 'd'))
+        # Do nothing if before a leap day and no leap days are found in the storm
+        storm_df[~is_after_leap_day]['cftime'] = storm_df[~is_after_leap_day]['cftime'].apply(lambda x: cftime.datetime(year=x.year,  
+                                                                                              month=x.month,
+                                                                                              day=x.day,
+                                                                                              hour=x.hour,
+                                                                                              calendar='noleap',
+                                                                                              has_year_zero=True))
         return storm_df
     else:
         print(f'[tc_tracks.table_constructor()] Leap day found in storm ID {track_year:04d}-{storm_number} - skipping this storm.')
