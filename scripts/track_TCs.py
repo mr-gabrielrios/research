@@ -12,7 +12,8 @@ import utilities
 
 def table_constructor(storm_number: str,
                       storm_track: list,
-                      track_year: int) -> pd.DataFrame:
+                      track_year: int,
+                      diagnostic: bool=False) -> pd.DataFrame:
 
     ''' Constructs a DataFrame. '''
     
@@ -29,31 +30,21 @@ def table_constructor(storm_number: str,
     # Derive storm_duration
     storm_df['duration'] = (storm_df['time'].max() - storm_df['time'].min()).total_seconds() / 86400
     # Check for leap dates - cftime is not handling them for compatibility with GCM outputs
-    # Note 1: if a storm timestamp falls on a leap day, skip it. 
-    # Note 2: If a storm timestamp falls on a leap year, handle it depending on whether it happens before or after leap day
-    # Note 2a: If before, do nothing. If after, add a day to it to account for the leap
-    has_leap_day = storm_df['time'].apply(lambda x: (x.month == 2) & (x.day == 29) & calendar.isleap(x.year))
-    is_after_leap_day = storm_df['time'].apply(lambda x: (x.month > 2) & calendar.isleap(x.year))
-    # If a leap day is in the storm data, return null
+    # Note 1: if a storm timestamp falls on a leap year, skip it. A better algorithm has to be made for this, but is okay for the time being.
+    has_leap_year = storm_df['time'].apply(lambda x: calendar.isleap(x.year))
+    # If a leap year is in the storm data, return null
     # Else, create column with cftime time data type to allow for Pandas operations while retaining actual model date
-    if has_leap_day.sum() == 0:
-        # Add a day if the days are after a leap day to account for the leap
-        storm_df[is_after_leap_day]['cftime'] = storm_df[is_after_leap_day]['cftime'].apply(lambda x: cftime.datetime(year=x.year,  
-                                                                                              month=x.month,
-                                                                                              day=x.day,
-                                                                                              hour=x.hour,
-                                                                                              calendar='noleap',
-                                                                                              has_year_zero=True) + pd.Timedelta(1, 'd'))
-        # Do nothing if before a leap day and no leap days are found in the storm
-        storm_df[~is_after_leap_day]['cftime'] = storm_df[~is_after_leap_day]['cftime'].apply(lambda x: cftime.datetime(year=x.year,  
-                                                                                              month=x.month,
-                                                                                              day=x.day,
-                                                                                              hour=x.hour,
-                                                                                              calendar='noleap',
-                                                                                              has_year_zero=True))
+    if has_leap_year.sum() == 0:
+        storm_df['cftime'] = storm_df['time'].apply(lambda x: cftime.datetime(year=track_year,  
+                                                                              month=x.month,
+                                                                              day=x.day,
+                                                                              hour=x.hour,
+                                                                              calendar='noleap',
+                                                                              has_year_zero=True))
         return storm_df
     else:
-        print(f'[tc_tracks.table_constructor()] Leap day found in storm ID {track_year:04d}-{storm_number} - skipping this storm.')
+        if diagnostic:
+            print(f'[tc_tracks.table_constructor()] Leap day found in storm ID {track_year:04d}-{storm_number} - skipping this storm.')
         return None
 
 def storm_criteria(storm: pd.DataFrame) -> pd.DataFrame:
@@ -133,6 +124,7 @@ def access(model_name: str,
 def storm_parser(track_year, track_pathname):
     
     annual_storm_tracks = {} # initialize container to hold year-specific storm tracks
+    
     storm_delimiter = '+++' # string used to demarcate new storm
     annual_track_number = 0 # initialize track number
     storm_track = [] # initialize temporary list that will hold data for an individual storm and be reset
@@ -159,10 +151,12 @@ def storm_parser(track_year, track_pathname):
                 # Append item to list, separate each column (separated by strings) into list elements
                 storm_track.append(line.strip().split())
     
-    # Concatenate storm DataFrames
-    annual_storm_tracks = pd.concat(annual_storm_tracks.values())
-        
-    return annual_storm_tracks
+    # Concatenate storm DataFrames if non-empty, else return empty list
+    if len(annual_storm_tracks.values()) > 0:
+        annual_storm_tracks = pd.concat(annual_storm_tracks.values())
+        return annual_storm_tracks
+    else:
+        return []
 
 def constructor(track_pathnames: dict,
                 parallel: bool = False,
@@ -187,7 +181,9 @@ def constructor(track_pathnames: dict,
             # Parallelize the call to `storm_parser`
             annual_storm_tracks = pool.starmap(storm_parser, func_input)
             # Concatenate this Pool's DataFrames
-            annual_storm_tracks = pd.concat(annual_storm_tracks)
+            annual_storm_track_entries = [annual_storm_track_entry for annual_storm_track_entry in annual_storm_tracks if
+                                          len(annual_storm_track_entry) > 0]
+            annual_storm_tracks = pd.concat(annual_storm_track_entries)
             # Append to container list for ultimate concatenation
             storm_tracks.append(annual_storm_tracks)
         print(f'Parallelized elapsed time for data construction: {(time.time() - start_time):.2f}s')
