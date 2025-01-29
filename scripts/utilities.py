@@ -12,11 +12,33 @@ import visualization
 import random
 import time
 from multiprocess import Pool
+import collections
 
 import warnings
 warnings.filterwarnings("ignore")
 
 import track_TCs
+
+def cftime_calendar_type(timestamp: cftime.datetime) -> str:
+    
+    ''' 
+    Method to store calendar definitions for `cftime` to allow for calendar type assignment for timestamps. 
+    Reference: https://unidata.github.io/cftime/api.html#cftime.datetime
+    '''
+    
+    # Ensure timestamp is a cftime object
+    assert 'cftime' in str(type(timestamp)), f'[utilities.cftime_calendar_reference()] Timestamp is not a cftime object.'
+    # Get timestamp calendar type
+    timestamp_calendar = str(type(timestamp))
+    # Define calendar types, with keys being the string outputs of type(`timestamp``), where timestamp is a cftime timestamp value.
+    #                        and values being the calendar type to be assigned to a new cftime object
+    calendar_types = {"<class 'cftime._cftime.DatetimeJulian'>": 'julian',
+                      "<class 'cftime._cftime.datetime'>": 'noleap',
+                      "<class 'cftime._cftime.DatetimeNoLeap'>": 'noleap'}
+    
+    assert timestamp_calendar in calendar_types.keys(), f'[utilities.cftime_calendar_reference()] Calendar type {timestamp_calendar} not found in reference dictionary.'
+    
+    return calendar_types[timestamp_calendar]
 
 def directories(model, experiment, data_type='model_output'):
     
@@ -34,8 +56,16 @@ def directories(model, experiment, data_type='model_output'):
                                               'model_output': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_ewishe_5x_tigercpu_intelmpi_18_540PE/POSTP'},
                           'CTL1990s_plus2K': {'track_data': '/projects2/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s_plus2K/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                               'model_output': '/projects2/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s_plus2K/POSTP'},
-                          'CTL1990s_tiger3': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM2.5/work/CTL1990s_tiger3_intelmpi_24_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
-                                              'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM2.5/work/CTL1990s_tiger3_intelmpi_24_540PE/POSTP'},
+                          'CTL1990s_tiger3': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM2.5/work/CTL1990s_tiger3_tiger3_intelmpi_24_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                              'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM2.5/work/CTL1990s_tiger3_tiger3_intelmpi_24_540PE/POSTP'},
+                          'CTL1990s_swishe_tiger3': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM2.5/work/CTL1990s_swishe_tiger3_tiger3_intelmpi_24_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                              'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM2.5/work/CTL1990s_swishe_tiger3_tiger3_intelmpi_24_540PE/POSTP'},
+                          'CTL1990s_ewishe2X_tiger3': {'track_data': '/projects/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s_ewishe2X_tiger3/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                              'model_output': '/projects/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s_ewishe2X_tiger3/POSTP'},
+                          'CTL1990s_ewishe4X_tiger3': {'track_data': '/projects/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s_ewishe4X_tiger3/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                              'model_output': '/projects/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s_ewishe4X_tiger3/POSTP'},
+                          'CTL1990s_ewishe8X_tiger3': {'track_data': '/projects/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s_ewishe8X_tiger3/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                              'model_output': '/projects/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s_ewishe8X_tiger3/POSTP'},
                           'CTL1990s_swishe_plus2K': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_plus2K_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                                      'model_output': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_plus2K_tigercpu_intelmpi_18_540PE/POSTP'}},
                 'AM2.5C360': {'CTL1990s': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5C360/work/CTL1990s_tigercpu_intelmpi_18_1080PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
@@ -46,6 +76,8 @@ def directories(model, experiment, data_type='model_output'):
                                       'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s/POSTP'},
                          'CTL1990s_FA': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_FA/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                       'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_FA/POSTP'},
+                         'CTL1990s_FA_tiger3': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/FLOR/exp/CTL1990s_FA_tiger3/work/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                      'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/FLOR/exp/CTL1990s_FA_tiger3/work/POSTP'},
                          'CTL1990s-8xdaily': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s-8xdaily_tigercpu_intelmpi_18_576PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                       'model_output': '/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s-8xdaily_tigercpu_intelmpi_18_576PE/POSTP'},
                          'CTL1990s_swishe': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_swishe/analysis_lmh/cyclones_gav_ro110_1C_330k',
@@ -58,6 +90,8 @@ def directories(model, experiment, data_type='model_output'):
                                       'model_output': '/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_swishe-8xdaily_tigercpu_intelmpi_18_576PE/POSTP'},
                          'CTL1990s_swishe_FA': {'track_data': '/projects/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_swishe_FA/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                      'model_output': '/projects/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_swishe_FA/POSTP'},
+                         'CTL1990s_swishe_FA_tiger3': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/FLOR/exp/CTL1990s_swishe_FA_tiger3/work/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                      'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/FLOR/exp/CTL1990s_swishe_FA_tiger3/work/POSTP'},
                          'CTL1990s_ewishe_5x': {'track_data': '/projects/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_ewishe_5x/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                      'model_output': '/projects/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_ewishe_5x/POSTP'},
                          'CTL1990s_2xCO2': {'track_data': '/projects/w/wenchang/MODEL_OUT/FLOR/CTL1990_v201905_2xCO2_tigercpu_intelmpi_18_576PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
@@ -138,7 +172,8 @@ def postprocess_access(models: list,
                        experiments: list, 
                        fields: dict, 
                        year_range: tuple[int, int], 
-                       FLOR_year_adjustment: int=2050) -> dict:
+                       FLOR_year_adjustment: int=2050,
+                       diagnostic: bool=False) -> dict:
 
     '''
     Determine path names for files from which climate model output data will be obtained.
@@ -184,7 +219,8 @@ def postprocess_access(models: list,
                              int(f.split('.nc')[0].split('-')[-1].split('_')[0]) <= min(model_year_range) and
                              int(f.split('.nc')[0].split('-')[-1].split('_')[1]) >= max(model_year_range)]
                 # Report how many files found for the requested field
-                print('{0} files found for the {1} model in the {2} experiment configuration for field {3}...'.format(len(filenames), model, experiment, field))
+                if diagnostic:
+                    print('{0} files found for the {1} model in the {2} experiment configuration for field {3}...'.format(len(filenames), model, experiment, field))
                 paths[model][experiment][field] = os.path.join(dirname, filenames[0]) if len(filenames) > 0 else None
 
     return paths
@@ -194,7 +230,8 @@ def postprocessed_data_load(models: str | list[str],
                            fields: dict, 
                            year_range: tuple[int, int], 
                            month_range: tuple[int, int] = (1, 12),
-                           difference_experiment: tuple[str, str] | None = False):
+                           difference_experiment: tuple[str, str] | None = False,
+                           load_full_time: bool=False):
 
     '''
     Loads data for a given list of models, experiments, and fields.
@@ -204,7 +241,8 @@ def postprocessed_data_load(models: str | list[str],
     - experiments (list): string or list of experiment names corresponding to each model
     - fields (dict): dictionary consisting of field name as the top-level key, with the climate domain (atmos or ocean) and vertical level as subkeys. See below for an example.
     - year_range (tuple of int, 2 items): minimum and maximum years for data processing
-    - difference_experiment (tuple of str, 2 items; default: False): 
+    - difference_experiment (tuple of str, 2 items; default: False)
+    - load_full_time (bool): boolean to dictate whether the full postprocessed dataset will be loaded and ignore the given year range
     Returns:
     - data (dict):  dictionary with keys corresponding to model names, subkeys corresponding to experiment names, 
                     and subkey values corresponding to xArray Datasets containing the requested fields
@@ -240,8 +278,8 @@ def postprocessed_data_load(models: str | list[str],
             data[model][experiment] = {}
             # Load data for the given configuration, and slice by time to minimize data loading into memorry
             for field in fields.keys():
-                data[model][experiment][field] = xr.open_dataset(paths[model][experiment][field])[field].sel(time=slice(start_year, end_year))
-                data[model][experiment][field]  = ocean_grid_alignment(data[model][experiment][field])
+                data[model][experiment][field] = xr.open_dataset(paths[model][experiment][field])[field] if load_full_time else xr.open_dataset(paths[model][experiment][field])[field].sel(time=slice(start_year, end_year))
+                data[model][experiment][field] = ocean_grid_alignment(data[model][experiment][field])
             # Merge dictionary values for each model and experiment pair into an xArray Dataset for a concise data structure
             data[model][experiment] = xr.merge(data[model][experiment].values())
             # Filter by month
@@ -777,9 +815,6 @@ def file_counter(model_names=['AM2.5', 'FLOR', 'HIRAM'], num_files=10):
         
     return file_counts
 
-
-    
-
 def land_mask(data, mask_type='land'):
     
     mask = xr.open_dataset('/projects2/GEOCLIM/gr7610/tools/land_mask.nc')['land_mask']
@@ -913,8 +948,10 @@ def in_basin(basin_masks: dict,
     ''' Method to determine if coordinate is in a pre-defined basin. '''
 
     # If input coordinates are not iterables, make them so. Else, make sure they're numeric arrays.
-    longitude = [longitude] if not iter(longitude) else np.array(longitude)
-    latitude = [latitude] if not iter(latitude) else np.array(latitude)
+    longitude = np.array(longitude) if isinstance(longitude, collections.abc.Iterable) else np.array([longitude])
+    latitude = np.array(latitude) if isinstance(latitude, collections.abc.Iterable) else np.array([latitude])
+    # longitude = [longitude] if not iter(longitude) else np.array(longitude)
+    # latitude = [latitude] if not iter(latitude) else np.array(latitude)
     # Make sure the input arguments are equal length.
     assert len(longitude) == len(latitude)
     input_length = len(longitude)

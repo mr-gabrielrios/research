@@ -447,3 +447,22 @@ def main(model_name: str,
     with Pool(processes=number_procs) as pool:
         pool.map(preloaded_storm_generator, storm_IDs)
         pool.close()
+        
+''' 
+Example snippet
+
+Parameters: model FLOR, experiment CTL1990s_FA_tiger3, years 1901 to 1905 with an intensity range of 980 to 1000 hPa:
+
+### 
+
+model_name = 'FLOR'
+experiment_name = 'CTL1990s_FA_tiger3'
+year_range = (1901, 1905)
+
+intensity_parameter = 'min_slp'
+intensity_range = (980, 1000)
+
+main(model_name, experiment_name, year_range, intensity_parameter, intensity_range, number_of_storms=5)
+
+###
+'''
