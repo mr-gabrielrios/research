@@ -277,9 +277,13 @@ def load_GCM_data(storm_gcm_pathnames,
 def trim_GCM_data(storm_gcm_data: xr.Dataset,
                   storm_gcm_timestamps,
                   storm_track_coordinates, 
-                  storm_gcm_window_size: int | float=12) -> xr.Dataset:
+                  storm_gcm_window_size: int | float=12,
+                  diagnostic: bool=False) -> xr.Dataset:
     
     ''' For each candidate storm timestamp, use storm coordinates to trim spatial extent of `GCM output` file. '''
+
+    # Start a timer for performance profiling
+    start_time = time.time()
 
     # Initialize a container to hold GCM output connected to each storm timestamp and the corresponding spatial extent
     storm_gcm_container = {}
@@ -303,17 +307,21 @@ def trim_GCM_data(storm_gcm_data: xr.Dataset,
     
     # Concatenate all GCM output data corresponding to storm into a single xArray Dataset
     storm_gcm_data = xr.concat(storm_gcm_container.values(), dim='time').sortby('time')
+    
+    if diagnostic:
+        print(f'[trim_GCM_data()] Elapsed time for storm: {(time.time() - start_time):.2f} s.')
 
     return storm_gcm_data
 
 def join_track_GCM_data(storm_track_data: pd.DataFrame,
-                        storm_gcm_data: xr.Dataset):
+                        storm_gcm_data: xr.Dataset,
+                        storm_time_variable: str='cftime'):
 
     ''' Append information from `track data` to netCDF object containing GCM output. '''
     
     # Filter storm track data that has matching timestamps with xArray Dataset `storm_gcm_data`
     # These should already match, but this is for posterity
-    storm_track_data_gcm = storm_track_data.loc[storm_track_data['cftime'].isin(storm_gcm_data.time.values)]
+    storm_track_data_gcm = storm_track_data.loc[storm_track_data[storm_time_variable].isin(storm_gcm_data.time.values)]
     # Define variables to append to netCDF
     storm_track_gcm_vars = ['center_lon', 'center_lat', 'min_slp', 'max_wind', 'storm_id']
     # Test to make sure that the variables requested are all in the track data DataFrame
@@ -361,6 +369,8 @@ def get_storm_basin_name(storm: xr.Dataset) -> str:
     return basin_name
 
 def save_storm_netcdf(storm_gcm_data: xr.Dataset,
+                      model_name: str,
+                      experiment_name: str,
                       overwrite: bool=False):
     
     ''' Save xArray Dataset to netCDF file. '''
@@ -393,7 +403,9 @@ def save_storm_netcdf(storm_gcm_data: xr.Dataset,
     # Save the data
     storm_gcm_data.to_netcdf(storm_pathname)
     
-def storm_generator(track_data: pd.DataFrame,
+def storm_generator(model_name: str,
+                    experiment_name: str,
+                    track_data: pd.DataFrame,
                     storm_ID: str):
 
     ''' Method to perform all steps related to binding corresponding GFDL QuickTracks and GCM model output together for a given TC. '''
@@ -417,7 +429,7 @@ def storm_generator(track_data: pd.DataFrame,
     # 9. Append information from `track data` to netCDF object containing GCM output
     storm_gcm_data = join_track_GCM_data(storm_track_data, storm_gcm_data)
     # 10. Save xArray Dataset to netCDF file
-    save_storm_netcdf(storm_gcm_data)
+    save_storm_netcdf(model_name, experiment_name, storm_gcm_data)
     
 def main(model_name: str, 
          experiment_name: str, 
@@ -442,7 +454,7 @@ def main(model_name: str,
     # Specify number of processors to use
     number_procs = len(storm_IDs) if len(storm_IDs) < max_number_procs else max_number_procs
     # Define partial function to allow for using Pool.map since `track_data` is equivalent for all subprocesses
-    preloaded_storm_generator = functools.partial(storm_generator, track_data)
+    preloaded_storm_generator = functools.partial(storm_generator, model_name, experiment_name, track_data)
     
     with Pool(processes=number_procs) as pool:
         pool.map(preloaded_storm_generator, storm_IDs)
