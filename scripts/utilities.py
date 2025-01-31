@@ -33,6 +33,7 @@ def cftime_calendar_type(timestamp: cftime.datetime) -> str:
     # Define calendar types, with keys being the string outputs of type(`timestamp``), where timestamp is a cftime timestamp value.
     #                        and values being the calendar type to be assigned to a new cftime object
     calendar_types = {"<class 'cftime._cftime.DatetimeJulian'>": 'julian',
+                      "<class 'cftime._cftime.DatetimeGregorian'>": 'gregorian',
                       "<class 'cftime._cftime.datetime'>": 'noleap',
                       "<class 'cftime._cftime.DatetimeNoLeap'>": 'noleap'}
     
