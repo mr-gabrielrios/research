@@ -128,7 +128,7 @@ def pick_storm_IDs(track_data: pd.DataFrame,
     # Get list of unique storm IDs
     unique_storm_IDs = track_data['storm_id'].unique()
     # Make sure the number of requested storms is less than the number of unique IDs; 
-    number_of_storms = len(unique_storm_IDs) if number_of_storms > len(unique_storm_IDs) else number_of_storms
+    number_of_storms = len(unique_storm_IDs) if (number_of_storms > len(unique_storm_IDs)) or (number_of_storms < 0) else number_of_storms
     # If not, make the number of storms equal to `unique_storm_IDs`
     # Get indices for `number_of_storms` random storm IDs
     storm_ID_indices = np.random.choice(range(len(unique_storm_IDs)), size=number_of_storms, replace=False)
@@ -157,7 +157,7 @@ def pick_storm(track_data: pd.DataFrame,
     storm_track_data = track_data.loc[track_data['storm_id'] == storm_ID].sort_values('cftime')
     # Check for storm quality
     test_single_storm(storm_track_data)
-
+    
     return storm_track_data
 
 def storm_GCM_calendar_alignment(storm_timestamps: list[cftime.datetime], 
@@ -400,8 +400,11 @@ def save_storm_netcdf(storm_gcm_data: xr.Dataset,
     # Print output file size as a diagnostic
     print(f'File size for {storm_filename}: {(storm_gcm_data.nbytes / 1e6):.2f} MB\n')
     
-    # Save the data
-    storm_gcm_data.to_netcdf(storm_pathname)
+    # Check if file exists
+    does_file_exist = os.path.isfile(storm_pathname)
+    if (does_file_exist and overwrite) or not does_file_exist:
+        # Save the data
+        storm_gcm_data.to_netcdf(storm_pathname)
     
 def storm_generator(model_name: str,
                     experiment_name: str,
