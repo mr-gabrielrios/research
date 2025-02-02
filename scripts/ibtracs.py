@@ -75,7 +75,9 @@ def clean_dataframe_IBTrACS(data_variables: dict,
     # Rename columns
     dataset = dataset.rename(columns=data_variables)
     # Generate cftime object
-    dataset['cftime'] = dataset['time'].apply(lambda x: cftime.datetime(year=x.year, month=x.month, day=x.day))
+    dataset['cftime'] = dataset['time'].apply(lambda x: cftime.datetime(year=x.year, month=x.month, day=x.day, hour=x.hour))
+    # Change longitude range from (-180, 180) to (0, 360)
+    dataset['center_lon'].loc[dataset['center_lon'] < 0] = dataset['center_lon'].loc[dataset['center_lon'] < 0] + 360
 
     return dataset
 
@@ -117,13 +119,17 @@ def generate_dataframe(dataset_xr: xr.core.dataset.Dataset) -> pd.DataFrame:
         # Convert object to DataFrame
         storm_dataframe = storm_dataframe.to_dataframe().reset_index(drop=True)
         # Append storm ID to DataFrame (assumes string is UTF-8 byte object)
-        storm_dataframe['storm_id'] = storm_dataset['sid'].item().decode('utf-8')
+        # Add a dash after the 4-digit year to conform with GFDL QuickTracks storm naming convention
+        storm_ID = storm_dataset['sid'].item().decode('utf-8')
+        storm_dataframe['storm_id'] = f'{storm_ID[:4]}-{storm_ID[4:]}'
+        # Derive storm_duration
+        storm_dataframe['duration'] = (storm_dataframe['time'].max() - storm_dataframe['time'].min()).total_seconds() / 86400
         # Perform data cleaning
         storm_dataframe = dataframe_cleaner(storm_dataframe)
         # Append to container
         storm_dataframes.append(storm_dataframe)
-    # Concatenate into single DataFrame
-    storm_dataframes = pd.concat(storm_dataframes)
+    # Concatenate into single DataFrame and drop repeat occurrences for each given TC
+    storm_dataframes = pd.concat(storm_dataframes).drop_duplicates(subset=['storm_id', 'time'])
 
     return storm_dataframes
 
@@ -202,8 +208,8 @@ def filter_storms(dataset,
     
     return dataset
 
-def pick_random_TC(track_data: pd.DataFrame,
-                   visualization: bool=True) -> pd.DataFrame:
+def pick_storm(track_data: pd.DataFrame,
+               visualization: bool=False) -> pd.DataFrame:
     
     # Pick random storm
     storm_IDs = track_data['storm_id'].unique()
@@ -225,7 +231,7 @@ def pick_random_TC(track_data: pd.DataFrame,
 def main(basin_name: str='global',
          date_range: tuple[str, str]=('2010-01-01', '2011-01-01'),
          intensity_parameter: str='max_wind',
-         intensity_range: tuple[int, int]=(30, 50)):
+         intensity_range: tuple[int, int]=(0, np.inf)):
     
     ''' Data loading. '''
     # Load and reformat data to GFDL conventions

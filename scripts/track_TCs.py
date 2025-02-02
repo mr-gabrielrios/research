@@ -8,6 +8,7 @@ import cftime
 import time
 from multiprocessing import Pool
 
+import ibtracs
 import utilities
 
 def table_constructor(storm_number: str,
@@ -31,10 +32,11 @@ def table_constructor(storm_number: str,
     storm_df['duration'] = (storm_df['time'].max() - storm_df['time'].min()).total_seconds() / 86400
     # Check for leap dates - cftime is not handling them for compatibility with GCM outputs
     # Note 1: if a storm timestamp falls on a leap year, skip it. A better algorithm has to be made for this, but is okay for the time being.
-    has_leap_year = storm_df['time'].apply(lambda x: calendar.isleap(x.year))
+    has_leap_year = storm_df['time'].apply(lambda x: (x.month == 2) & calendar.isleap(x.year))
     # If a leap year is in the storm data, return null
     # Else, create column with cftime time data type to allow for Pandas operations while retaining actual model date
     if has_leap_year.sum() == 0:
+        
         storm_df['cftime'] = storm_df['time'].apply(lambda x: cftime.datetime(year=track_year,  
                                                                               month=x.month,
                                                                               day=x.day,
@@ -235,15 +237,34 @@ def constructor(track_pathnames: dict,
 
     return storm_tracks
 
+def load_IBTrACS(year_range: tuple[int, int]) -> pd.DataFrame:
+    
+    ''' Parse IBTrACS track data. '''
+    
+    # Ensure inputs are properly formatted. 
+    # Note the use of string comparison insteado f `isinstance` for type checking - this is meant to catch general integer data types
+    assert len(year_range) == 2, 'Year range must have 2 elements.'
+    assert ('int' in str(type(year_range[0]))) & ('int' in str(type(year_range[1]))), 'Year range must have 2 integer elements.'
+    # Construct date range string for IBTrACS function input
+    date_range = tuple([f'{year}-01-01' for year in sorted(year_range)])
+    
+    storm_tracks = ibtracs.main(date_range=date_range)
+    
+    return storm_tracks
+
 def main(model_name: str,
          experiment_name: str,
          year_range: tuple[int, int],
          run_parallel: bool=True) -> pd.DataFrame:
 
+    # Get storm track data for IBTrACS data
+    if model_name == 'IBTrACS':
+        storm_tracks = load_IBTrACS(year_range)
     # Get pathnames for GFDL QuickTracks data
-    track_pathnames = access(model_name, experiment_name, year_range)
-    # Get storm track data
-    storm_tracks = constructor(track_pathnames, parallel=run_parallel)
+    else:
+        track_pathnames = access(model_name, experiment_name, year_range)
+        # Get storm track data
+        storm_tracks = constructor(track_pathnames, parallel=run_parallel)
     
     return storm_tracks
 
