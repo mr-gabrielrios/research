@@ -7,6 +7,7 @@ import scipy as sp
 import xarray as xr
 import matplotlib
 import matplotlib.pyplot as plt
+import cftime
 import time
 
 import utilities
@@ -249,7 +250,7 @@ def field_properties(field):
                   'wind': {'long_name': '10m horizontal wind speed', 'units': 'm s$^{-1}$'},
                   'ucomp': {'long_name': 'zonal wind speed', 'units': 'm s$^{-1}$'},
                   'vcomp': {'long_name': 'meridional wind speed', 'units': 'm s$^{-1}$'},
-                  'WVP': {'long_name': 'column-integrated water vapor\n', 'units': 'kg m$^{-2}$'},
+                  'WVP': {'long_name': 'column-integrated water vapor', 'units': 'kg m$^{-2}$'},
                   'h': {'long_name': 'moist static energy', 'units': 'J kg$^{-1}$'},
                   'slp': {'long_name': 'sea level pressure', 'units': 'hPa'},
                   'omega': {'long_name': 'pressure velocity', 'units': 'Pa s$^{-1}$'},
@@ -276,7 +277,9 @@ def field_properties(field):
                   'olr_clr': {'long_name': '$\\theta_e$', 'units': 'K'},
                   'theta_e': {'long_name': '$\\theta_e$', 'units': 'K'},
                   'mld': {'long_name': 'mixed-layer depth', 'units': 'm'},
-                  'q_atm': {'long_name': 'atmospheric heating', 'units': 'W m$^{-2}$'}}
+                  'q_atm': {'long_name': 'atmospheric heating', 'units': 'W m$^{-2}$'},
+                  'net_lw': {'long_name': 'net longwave flux into atmosphere', 'units': 'W m$^{-2}$'},
+                  'swup_toa': {'long_name': 'upward shortwave flux at TOA', 'units': 'W m$^{-2}$'}}
 
     if field in properties.keys():
         properties[field]['long_name'] = properties[field]['long_name'] + long_name_addendum
@@ -702,10 +705,35 @@ def composite_plot(dataset, models, experiments, field, plot_type, contour_level
 
 ### End compositing support methods
 
-def TC_density_grid(model_names, experiment_names, year_range, FLOR_year_adjustment=1900, difference_order='ltr', 
-                 bin_resolution=5, storm_type=None, dpi=96, savefig=True):
+def TC_density_grid(model_names, experiment_names, year_range, year_adjustment=0, 
+                    configuration=None, difference_order='ltr', 
+                    bin_resolution=5, storm_type=None, dpi=96, savefig=True):
 
-    densities = tc_analysis.TC_density(model_names, experiment_names, year_range, FLOR_year_adjustment=FLOR_year_adjustment, bin_resolution=bin_resolution, storm_type=storm_type)
+    # Handle IBTrACS intake differently than pure GCM data
+    if configuration == 'IBTrACS':
+        assert len(model_names) == 2, '2 model names (1 is IBTrACS) must be provided. Cannot compare more than one model with IBTrACS.'
+        assert '' in experiment_names, 'At least one experiment name with IBTrACS data must be empty.'
+        
+        # Get GCM model name
+        GCM_model_name = [model_name for model_name in model_names if model_name != 'IBTrACS'][0]
+        # Get GCM experiment name
+        GCM_experiment_name = [experiment_name for experiment_name in experiment_names if experiment_name != ''][0]
+        # Get GCM TC densities
+        GCM_densities = tc_analysis.TC_density(GCM_model_name, GCM_experiment_name, year_range, year_adjustment=0, bin_resolution=bin_resolution, storm_type=storm_type)
+        # Get IBTrACS densities
+        IBTrACS_densities = tc_analysis.TC_density('IBTrACS', '', year_range, year_adjustment=year_adjustment, bin_resolution=bin_resolution, storm_type=storm_type)
+        # Create a united density container. This is done in a specific order such that IBTrACS is on the leftmost panel.
+        densities = {GCM_model_name: {}}
+        # Make IBTrACS a GCM subexperiment
+        densities[GCM_model_name]['IBTrACS'] = IBTrACS_densities['IBTrACS']['']
+        densities[GCM_model_name][GCM_experiment_name] = GCM_densities[GCM_model_name][GCM_experiment_name]
+        # Drop IBTrACS as a top-level key and from the model namelist
+        model_names.remove('IBTrACS')
+        experiment_names = ['IBTrACS' if experiment_name == '' else experiment_name for experiment_name in experiment_names]
+    # Handle GCM data
+    else:
+        densities = tc_analysis.TC_density(model_names, experiment_names, year_range, year_adjustment=year_adjustment, bin_resolution=bin_resolution, storm_type=storm_type)
+
     year_min, year_max = min(year_range), max(year_range)
 
     # Ensure input data is of proper form
@@ -727,7 +755,7 @@ def TC_density_grid(model_names, experiment_names, year_range, FLOR_year_adjustm
         run_CTL, run_EXP = experiment_names
     else:
         run_CTL, run_EXP = None, None
-        
+    
     ''' Begin plotting. '''
     # Note: number of rows is dictated by number of models + 1 (for colorbar) 
     nrows = len(model_names) + 1
@@ -781,16 +809,19 @@ def TC_density_grid(model_names, experiment_names, year_range, FLOR_year_adjustm
     # Pass 2: Iterate through density dictionary to plot each model and each experiment's density data.
     for model_index, model_name in enumerate(densities.keys()):
         for experiment_index, experiment in enumerate(densities[model_name].keys()):
+            print(model_name, experiment)
             # Boolean to control whether or not model and years print. Turn off for the difference plot.
             subplot_title = False if "-" in experiment else True
-            # Adjustment to FLOR model years
-            min_year = year_min if model_name == 'FLOR' else year_min
-            max_year = year_max if model_name == 'FLOR' else year_max
             # Control plot suplabels - tailor-made for a 3-model composite plot
             xlabel = True if len(densities[model_name].keys()) == 3 and (experiment_index == 1) and (model_index == 2) else False
             ylabel = True if len(densities[model_name].keys()) == 3 and (experiment_index == 0) and (model_index == 1) else False
+            # Set up IBTrACS-specific modifications
+            model_year_min = year_min + year_adjustment if experiment == 'IBTrACS' else year_min
+            model_year_max = year_max + year_adjustment if experiment == 'IBTrACS' else year_max
+            model_name_title = 'IBTrACS' if experiment =='IBTrACS' else model_name
+            experiment_name_title = '' if experiment =='IBTrACS' else experiment
             # Set up the figure structure for the iterand subplot
-            fig, grid, ax, proj = basemap(fig, grid, model_name, experiment, (min_year, max_year), 
+            fig, grid, ax, proj = basemap(fig, grid, model_name_title, experiment_name_title, (model_year_min, model_year_max), 
                                           row_num=model_index, col_num=experiment_index, land=True, xlabel=xlabel, ylabel=ylabel, 
                                           subplot_title=subplot_title, label_fontsize=10)
 
@@ -1199,68 +1230,77 @@ def basins(visualize=False, grid_type='atmos', save_netcdf=False):
              'IPWP': [90, 170, -10, 10], # Maritime Continent as proxy for the Indo-Pacific Warm Pool
              'ENSO': [190, 240, -5, 5]} # Maritime Continent as proxy for the Indo-Pacific Warm Pool}
     
-    # Generate masks to filter by basin
-    basin_masks = {}
-    grid_path = '/tigress/GEOCLIM/gr7610/tools/AM2.5_atmos_area.nc' if grid_type == 'atmos' else '/tigress/GEOCLIM/gr7610/tools/FLOR_ocean_area.nc'
-    grid = xr.open_dataset(grid_path)
-    for i, basin_data in enumerate(basins.items()):
-        basin, basin_extent = basin_data
-        mask = np.full(shape=(len(grid.grid_yt), len(grid.grid_xt)), fill_value=0)
-
-        for j, y in enumerate(grid.grid_yt.values):
-            for i, x in enumerate(grid.grid_xt.values):
-                # Rectangular basins
-                if (x >= basin_extent[0]) and (x < basin_extent[1]) and (y >= basin_extent[2]) and (y < basin_extent[3]):
-                    mask[j, i] = 1
-                # Special cases - handle the Central American isthmus
-                if basin in ['EP', 'NA']:
-                    x0, x1, y0, y1 = [260, 295, 0, 22]
-                    m = (y0 - y1)/(x1 - x0)
-                    f_y = m*(grid.grid_xt.values - x1) + y0
-                    if (x >= x0) and (x < x1) and (y >= y0) and (y < f_y[i]):
-                        mask[j, i] = 1 if basin == 'EP' else 0
-            basin_masks[basin] = xr.DataArray(name=basin,
-                                              data=mask,
-                                              dims=grid.dims,
-                                              coords=grid.coords)
-
-    if visualize:
-        proj, proj_ref = ccrs.PlateCarree(central_longitude=180), ccrs.PlateCarree()
-        fig, gs = plt.figure(figsize=(8, 3), dpi=300), matplotlib.gridspec.GridSpec(nrows=1, ncols=1)
-
-        fig, gs, ax, proj_ref = basemap(fig, gs, 'Basins', '', row_num=0, col_num=0, extent=[0, 359, -60, 60], land=True)
+    # Define output pathname
+    basin_mask_pathname = '/projects/GEOCLIM/gr7610/tools/basin_mask.nc'
+    
+    # Preload existing data, if available
+    if os.path.exists(basin_mask_pathname) and not save_netcdf:
+        basin_masks = xr.open_dataset(basin_mask_pathname)
         
-        prop_cycle = plt.rcParams['axes.prop_cycle']
-        colors = prop_cycle.by_key()['color']
+        return basins, basin_masks
+    # If not, generate the data
+    else:
+        # Generate masks to filter by basin
+        basin_masks = {}
+        grid_path = '/tigress/GEOCLIM/gr7610/tools/AM2.5_atmos_area.nc' if grid_type == 'atmos' else '/tigress/GEOCLIM/gr7610/tools/FLOR_ocean_area.nc'
+        grid = xr.open_dataset(grid_path)
         
-        ax.coastlines()
         for i, basin_data in enumerate(basins.items()):
             basin, basin_extent = basin_data
-            text_offset_horizontal = 40 if basin == 'NA' else 0
-            if basin in ['EP', 'NA']:
-                if basin == 'EP':
-                    xy = [(180, 40), (260, 40), (260, 22), (295, 0), (180, 0)]
-                    patch = matplotlib.patches.Polygon(xy, closed=True, fc='none', lw=2, ec=colors[i], transform=proj_ref, zorder=i+10)
-                else:
-                    xy = [(260, 40), (360, 40), (360, 0), (295, 0), (260, 22)]
-                    patch = matplotlib.patches.Polygon(xy, closed=True, fc='none', lw=2, ec=colors[i], transform=proj_ref, zorder=i+10)
-            else:
-                patch = matplotlib.patches.Rectangle(xy=(basin_extent[0], basin_extent[2]),
-                                                    width=(basin_extent[1] - basin_extent[0]), height=(basin_extent[3] - basin_extent[2]), 
-                                                    fc='none', lw=2, ec=colors[i], transform=proj_ref, zorder=i+10)
-            ax.annotate(text=basin, xy=(basin_extent[0], basin_extent[2]), xytext=(5 + text_offset_horizontal, 6), 
-                        textcoords='offset points', transform=proj_ref, bbox=dict(facecolor=(1, 1, 1, 0.9), ec='None'))
-            ax.add_patch(patch)
-        ax.set_extent([0, 359, -60, 60])
-        plt.show()
-        
-    if save_netcdf:
-        dirname = '/projects/GEOCLIM/gr7610/tools'
-        filename = 'basin_mask.nc'
-        basin_dataarray = xr.merge(basin_masks.values())
-        basin_dataarray.to_netcdf(os.path.join(dirname, filename), mode='w')
+            mask = np.full(shape=(len(grid.grid_yt), len(grid.grid_xt)), fill_value=0)
 
-    return basins, basin_masks
+            for j, y in enumerate(grid.grid_yt.values):
+                for i, x in enumerate(grid.grid_xt.values):
+                    # Rectangular basins
+                    if (x >= basin_extent[0]) and (x < basin_extent[1]) and (y >= basin_extent[2]) and (y < basin_extent[3]):
+                        mask[j, i] = 1
+                    # Special cases - handle the Central American isthmus
+                    if basin in ['EP', 'NA']:
+                        x0, x1, y0, y1 = [260, 295, 0, 22]
+                        m = (y0 - y1)/(x1 - x0)
+                        f_y = m*(grid.grid_xt.values - x1) + y0
+                        if (x >= x0) and (x < x1) and (y >= y0) and (y < f_y[i]):
+                            mask[j, i] = 1 if basin == 'EP' else 0
+                basin_masks[basin] = xr.DataArray(name=basin,
+                                                data=mask,
+                                                dims=grid.dims,
+                                                coords=grid.coords)
+
+        if visualize:
+            proj, proj_ref = ccrs.PlateCarree(central_longitude=180), ccrs.PlateCarree()
+            fig, gs = plt.figure(figsize=(8, 3), dpi=300), matplotlib.gridspec.GridSpec(nrows=1, ncols=1)
+
+            fig, gs, ax, proj_ref = basemap(fig, gs, 'Basins', '', row_num=0, col_num=0, extent=[0, 359, -60, 60], land=True)
+            
+            prop_cycle = plt.rcParams['axes.prop_cycle']
+            colors = prop_cycle.by_key()['color']
+            
+            ax.coastlines()
+            for i, basin_data in enumerate(basins.items()):
+                basin, basin_extent = basin_data
+                text_offset_horizontal = 40 if basin == 'NA' else 0
+                if basin in ['EP', 'NA']:
+                    if basin == 'EP':
+                        xy = [(180, 40), (260, 40), (260, 22), (295, 0), (180, 0)]
+                        patch = matplotlib.patches.Polygon(xy, closed=True, fc='none', lw=2, ec=colors[i], transform=proj_ref, zorder=i+10)
+                    else:
+                        xy = [(260, 40), (360, 40), (360, 0), (295, 0), (260, 22)]
+                        patch = matplotlib.patches.Polygon(xy, closed=True, fc='none', lw=2, ec=colors[i], transform=proj_ref, zorder=i+10)
+                else:
+                    patch = matplotlib.patches.Rectangle(xy=(basin_extent[0], basin_extent[2]),
+                                                        width=(basin_extent[1] - basin_extent[0]), height=(basin_extent[3] - basin_extent[2]), 
+                                                        fc='none', lw=2, ec=colors[i], transform=proj_ref, zorder=i+10)
+                ax.annotate(text=basin, xy=(basin_extent[0], basin_extent[2]), xytext=(5 + text_offset_horizontal, 6), 
+                            textcoords='offset points', transform=proj_ref, bbox=dict(facecolor=(1, 1, 1, 0.9), ec='None'))
+                ax.add_patch(patch)
+            ax.set_extent([0, 359, -60, 60])
+            plt.show()
+            
+        if save_netcdf:
+            basin_dataarray = xr.merge(basin_masks.values())
+            basin_dataarray.to_netcdf(basin_mask_pathname, mode='w')
+
+        return basins, basin_masks
 
 def TC_density_modifier(track_data: pd.DataFrame, 
                         track_bins: np.array):
@@ -1371,58 +1411,83 @@ def TC_density_histogram(model_name: str,
 
     return tracks
 
-def tc_activity(track_data, model_name, experiments=['control', 'swishe'], storm_types=['TS', 'C15w'], 
-                year_range=None, savefig=False):
+def TC_activity(track_data: dict, 
+                model_name: str, 
+                experiments: list, 
+                year_range: tuple, 
+                intensity_parameter: str='min_slp',
+                savefig=False):
     
     ''' Function to generate monthly climatologies of TC activity, subdivided per basin. See the script snippet below for recommended function use. '''
     
-    ####### Begin recommended run snippet. ##########
-    monthly_track_data = {}
-    # for model in ['HIRAM', 'AM2.5', 'FLOR']:
-    #     year_range = (101, 150) if model in ['HIRAM', 'AM2.5'] else (150, 200)
-    #     track_data = {model: {}}
-    #     for storm_type in ['TS', 'C15w']:
-    #         temp = tc_analysis.tc_track_data([model], ['control', 'swishe'], storm_type=storm_type, year_range=year_range)
-    #         track_data[model][storm_type] = temp[model]
-    #         monthly_track_data[model] = track_data
-    #     tc_activity(track_data, model, experiments=['control', 'swishe'], storm_types=['TS', 'C15w'], year_range=year_range, savefig=True)
-    ####### End recommended run snippet. ##########
-    
     ''' Data loading. '''
     # Import basin data
-    basins, basin_masks = basins()
+    basin_dict, basin_masks = basins()
+    # Initialize container for storm types, to be appended for later reference
+    storm_types = []
 
     ''' Data processing. '''
     # Set up dictionary to hold monthly-grouped track data for a given model
     monthly_track_data = {}
     
+    # Initialize container for year range, to be assigned dynamically
+    dataset_year_minimum = np.nan
+    dataset_year_maximum = np.nan
+    
     # Iterate over each experiment
     for experiment in experiments:
         monthly_track_data[experiment] = {}
         # Iterate over each basin
-        for basin in basins.keys():
-            monthly_track_data[experiment][basin] = {}
-            # Iterate over each storm type
-            for storm_type in storm_types:
-                monthly_track_data[experiment][basin][storm_type] = {}
-                # Retrieve mask from the iterand basin to determine if TCs are being searched for here
-                basin_mask = basin_masks[basin]
-                # Get pseudonym for iterand basin data
-                df = track_data[model_name][storm_type][experiment]['unique'].copy().sort_values('time')
-                # Iterate over each month in the DataFrame
-                for month, month_data in df.groupby(df['time'].dt.strftime('%m')):
-                    # Define helper functions to retrieve the closest GCM data point to the iterand TC center
-                    find_lon = lambda x: basin_mask.grid_xt.values[(np.abs(basin_mask.grid_xt.values - x)).argmin()]
-                    find_lat = lambda y: basin_mask.grid_yt.values[(np.abs(basin_mask.grid_yt.values - y)).argmin()]
-                    # Save the GCM data point coordinates
-                    month_data['grid_xt'] = month_data['center_lon'].apply(find_lon)
-                    month_data['grid_yt'] = month_data['center_lat'].apply(find_lat)
-                    # Retrieve the mask data
-                    month_data['mask'] = month_data.apply(lambda c: basin_mask.sel(grid_xt=c['grid_xt'], 
-                                                                                   grid_yt=c['grid_yt'], method='nearest').item(), axis=1)
-                    # If the mask data is 1, TC is in the iterand basin, and keep it. Else, drop it
-                    monthly_track_data[experiment][basin][storm_type][month] = month_data.loc[month_data['mask'] == 1]
+        for basin in basin_dict.keys():
+            monthly_track_data[experiment][basin] = {'TS': {}}
+            # Retrieve mask from the iterand basin to determine if TCs are being searched for here
+            basin_mask = basin_masks[basin]
+            # Get unique timestamp for each TC at lifetime maximum intensity
+            # Get pseudonym (df) for iterand basin data
+            if intensity_parameter == 'min_slp':
+                maximum_intensity_mask = track_data[model_name].groupby('storm_id')[intensity_parameter].transform(min) == track_data[model_name][intensity_parameter] 
+            else:
+                maximum_intensity_mask = track_data[model_name].groupby('storm_id')[intensity_parameter].transform(max) == track_data[model_name][intensity_parameter]
+            df = track_data[model_name][maximum_intensity_mask].drop_duplicates('storm_id').sort_values('time')
+            # Filter by input year range
+            calendar_type = utilities.cftime_calendar_type(df['cftime'].iloc[0]) # get calendar type from the input dataset's cftime column
+            df = df.loc[(df['cftime'] >= cftime.datetime(year=min(year_range), month=1, day=1, calendar=calendar_type)) & 
+                        (df['cftime'] < cftime.datetime(year=max(year_range), month=1, day=1, calendar=calendar_type))]
+            # Iterate over each month in the DataFrame
+            for month, month_data in df.groupby(df['time'].dt.strftime('%m')):
+                # Define helper functions to retrieve the closest GCM data point to the iterand TC center
+                find_lon = lambda x: basin_mask.grid_xt.values[(np.abs(basin_mask.grid_xt.values - x)).argmin()]
+                find_lat = lambda y: basin_mask.grid_yt.values[(np.abs(basin_mask.grid_yt.values - y)).argmin()]
+                # Save the GCM data point coordinates
+                month_data['grid_xt'] = month_data['center_lon'].apply(find_lon)
+                month_data['grid_yt'] = month_data['center_lat'].apply(find_lat)
+                # Retrieve the mask data
+                month_data['mask'] = month_data.apply(lambda c: basin_mask.sel(grid_xt=c['grid_xt'], 
+                                                                                grid_yt=c['grid_yt'], method='nearest').item(), axis=1)
+                # If the mask data is 1, TC is in the iterand basin, and keep it. Else, drop it
+                # Designate this key as 'TS', for all (t)ropical (s)torms
+                monthly_track_data[experiment][basin]['TS'][month] = month_data.loc[month_data['mask'] == 1]
+                # Update years
+                dataset_year_minimum = month_data.loc[month_data['mask'] == 1].time.min().year if (np.isnan(dataset_year_minimum)) or (month_data.loc[month_data['mask'] == 1].time.min().year < dataset_year_minimum) else dataset_year_minimum
+                dataset_year_maximum = month_data.loc[month_data['mask'] == 1].time.max().year if (np.isnan(dataset_year_maximum)) or (month_data.loc[month_data['mask'] == 1].time.min().year > dataset_year_maximum) else dataset_year_maximum
 
+                
+    storm_types.append('TS')
+                
+    ''' Filter for hurricane-strength storms by maximm winds. '''
+    for experiment_name in monthly_track_data.keys():
+        for basin_name in monthly_track_data[experiment_name].keys():
+            monthly_track_data[experiment][basin_name]['HU'] = {}
+            for month_name in monthly_track_data[experiment_name][basin_name]['TS'].keys():
+                # Get monthly data
+                month_dataset = monthly_track_data[experiment_name][basin_name]['TS'][month_name]
+                # Filter by hurricane-strength winds (> 32 m/s per Harris et al. 2016, 10.1175/JCLI-D-15-0389.1)
+                month_dataset_hurricane = month_dataset.loc[month_dataset['max_wind'] >= 32]
+                # Assign to DataFrame
+                monthly_track_data[experiment][basin_name]['HU'][month_name] = month_dataset_hurricane
+                
+    storm_types.append('HU')
+    
     ''' Visualization. '''
     fig, gs = plt.figure(figsize=(14, 4), dpi=144), matplotlib.gridspec.GridSpec(nrows=2, ncols=4, wspace=0.25, hspace=0.5)
     
@@ -1433,22 +1498,22 @@ def tc_activity(track_data, model_name, experiments=['control', 'swishe'], storm
             sharey = axes['(0, 0)'] if (i > 0 or j > 0) else None
             axes['({0}, {1})'.format(i, j)] = fig.add_subplot(gs[i, j], sharey=sharey)
             ax = axes['({0}, {1})'.format(i, j)]
-            basin_name = list(basins.keys())[ax_count]
+            basin_name = list(basin_dict.keys())[ax_count]
 
             statistics = {}
     
             for k, experiment in enumerate(experiments):
-                props = cycler(k)
                 statistics[experiment] = {storm_type: 0 for storm_type in storm_types}
                 for m, storm_type in enumerate(storm_types):
+                    props = cycler(m)
                     months = [int(k) for k, v in monthly_track_data[experiment][basin_name][storm_type].items()]
                     counts = [v['storm_id'].nunique()/(max(year_range) - min(year_range)) 
                               for k, v in monthly_track_data[experiment][basin_name][storm_type].items()]
         
                     width = 0.4
-                    hatch = 'xxxx' if storm_type == 'C15w' else ''
-                    facecolor = 'white' if storm_type == 'C15w' else props['c']
-                    alpha = 1 if storm_type == 'C15w' else 0.625
+                    hatch = 'xxxx' if storm_type == 'HU' else ''
+                    facecolor = props['c']
+                    alpha = 1 if storm_type == 'HU' else 0.625
                     # Bar plot - first pass for hatching color
                     ax.bar(np.array(months) + width*k, counts, width=width, fc=facecolor, ec=props['c'], alpha=alpha, hatch=hatch)
                     # Redo for edges
@@ -1456,16 +1521,15 @@ def tc_activity(track_data, model_name, experiments=['control', 'swishe'], storm
 
                     if m == 0:
                         ax.set_xticks(months, [utilities.month_letter(l) for l in months])
-
+                        
                     statistics[experiment][storm_type] = sum(counts)
             
             ax.set_title('{0}, {1}'.format(model_name, basin_name), loc='left', fontsize=10)
             ax_count += 1
 
-            ax.annotate('{0}: CTL = {1:.1f}, EXP = {2:.1f}'.format('TS', statistics['control']['TS'], statistics['swishe']['TS']),
-                        xy=(0.03, 0.96), xycoords='axes fraction', fontsize=7, ha='left', va='top')
-            ax.annotate('{0}: CTL = {1:.1f}, EXP = {2:.1f}'.format('HU', statistics['control']['C15w'], statistics['swishe']['C15w']),
-                        xy=(0.03, 0.84), xycoords='axes fraction', fontsize=7, ha='left', va='top')
+            for experiment in experiments:
+                ax.annotate(f'TS: {statistics[experiment_name]['TS']:.1f}', xy=(0.03, 0.96), xycoords='axes fraction', fontsize=7, ha='left', va='top')
+                ax.annotate(f'HU: {statistics[experiment_name]['HU']:.1f}', xy=(0.03, 0.88), xycoords='axes fraction', fontsize=7, ha='left', va='top')
 
     if savefig:
         filename = 'model_{0}-storm_count_monthly-{1}-year_s{2}_e{3}.png'.format(model_name, storm_type, min(year_range), max(year_range))

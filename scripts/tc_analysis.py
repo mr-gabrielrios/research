@@ -6,6 +6,7 @@ import os
 import pickle
 import random
 import time
+import cftime
 
 from concurrent.futures import ProcessPoolExecutor as Pool
 
@@ -76,9 +77,14 @@ def tc_model_data(models, experiments, storm_type, num_storms=-1, single_storm_i
 
     return data
 
-
-def tc_track_data(models, experiments, storm_type='TS', snapshot_type='lmi', year_range=None, FLOR_year_adjust=False,
-                  FLOR_year_adjustment=1950, parallel_load=True, diagnostic=False, num_procs=16):
+def tc_track_data(models: list[str], 
+                  experiments: list[str], 
+                  storm_type: str='TS', 
+                  snapshot_type: str='lmi', 
+                  year_range=None, 
+                  parallel_load: bool=True,
+                  diagnostic: bool=False, 
+                  num_procs: int=16):
     """
     Method to extract track data (output from Lucas Harris' TC tracker).
     Sample uses include aggregate statistics, track plotting, etc.
@@ -100,15 +106,12 @@ def tc_track_data(models, experiments, storm_type='TS', snapshot_type='lmi', yea
     print('[tc_track_data] Checkpoint {0}: {1:.3f} s elapsed'.format(
         checkpoint_counter, time.time() - start_time))
 
-    FLOR_year_adjustment = 0 if not FLOR_year_adjust else FLOR_year_adjustment
-
     # Initialize dictionary for gridded data
     data = {}
     # Iterate over each model
     for model in models:
         # Adjust years for FLOR, if the iterand model
-        model_year_range = [
-            year + FLOR_year_adjustment for year in year_range] if model == 'FLOR' else year_range
+        model_year_range = year_range
         # Initialize dictionary for the model
         data[model] = {}
         # Iterate over each experiment
@@ -131,8 +134,7 @@ def tc_track_data(models, experiments, storm_type='TS', snapshot_type='lmi', yea
                 num_procs = num_years // 2 if num_years // 2 <= num_procs else num_procs
 
                 # Define year chunks
-                year_chunks = np.linspace(min(model_year_range), max(
-                    model_year_range), num_procs + 1, dtype=int)
+                year_chunks = np.linspace(min(model_year_range), max(model_year_range), num_procs + 1, dtype=int)
 
                 # Create non-coterminous chunks to avoid duplicates
                 processed_chunks = []
@@ -145,8 +147,7 @@ def tc_track_data(models, experiments, storm_type='TS', snapshot_type='lmi', yea
                             (year_chunks[chunk_index]+1, year_chunks[chunk_index+1]))
 
                 if diagnostic:
-                    print('[tc_track_data] Number of processors used: {0} for year chunks {1}'.format(
-                        num_procs, processed_chunks))
+                    print('[tc_track_data] Number of processors used: {0} for year chunks {1}'.format(num_procs, processed_chunks))
 
                 # Create the outer loop pool
                 pool = Pool(num_procs)
@@ -180,8 +181,7 @@ def tc_track_data(models, experiments, storm_type='TS', snapshot_type='lmi', yea
                 if diagnostic:
                     print('\t Working on {0}...'.format(storm_id))
                 # Select data for the iterand storm ID
-                storm = data[model][experiment]['raw'].loc[data[model]
-                                                           [experiment]['raw']['storm_id'] == storm_id]
+                storm = data[model][experiment]['raw'].loc[data[model][experiment]['raw']['storm_id'] == storm_id]
                 # Get snapshot of TC based on argument
                 storm = utilities.storm_snapshot(storm, mode=snapshot_type)
                 ###
@@ -200,10 +200,9 @@ def tc_track_data(models, experiments, storm_type='TS', snapshot_type='lmi', yea
             data[model][experiment]['unique'] = data[model][experiment]['unique'].loc[data[model]
                                                                                       [experiment]['unique']['duration'] <= 30]
             # Apply additional storm_data
-            data[model][experiment]['raw'] = TC_statistics(data[model][experiment]['raw'])
+            # data[model][experiment]['raw'] = TC_statistics(data[model][experiment]['raw'])
 
     return data
-
 
 def counts(mode='track_output', data=None):
     """
@@ -272,7 +271,6 @@ def counts(mode='track_output', data=None):
     bin_counts = pd.DataFrame.from_dict(bin_counts, orient='columns')
 
     return storm_counts, bin_counts
-
 
 def tc_activity_overlay(model_name, experiment, year_range, bin_resolution=2.5, FLOR_year_adjust=True,
                         FLOR_year_adjustment=1950):
@@ -358,7 +356,6 @@ def tc_activity_overlay(model_name, experiment, year_range, bin_resolution=2.5, 
 
     return x, y, densities
 
-
 def track_data_loading(models=['HIRAM', 'AM2.5', 'FLOR'], experiments=['CTL1990s', 'CTL1990s_swishe'],
                        storm_type='TS', year_range=(101, 151), save_data=False, diagnostic=True):
 
@@ -435,10 +432,10 @@ def TC_statistics(track_data: pd.DataFrame):
     
     # Append accumulated cyclone energy [m^2 s^-1]
     # Method: get squared sum of each storm's maximum winds and multiply it by the duration (in days) and correct for units
-    track_data['ACE'] = track_data.groupby('storm_id').apply(lambda x: ((x['max_wind']**2).sum() * x['duration'] * 86400)).rename('ACE').reset_index(drop=True)
+    track_data['ACE'] = track_data.groupby('storm_id').apply(lambda x: ((x['max_wind']**2).sum())).rename('ACE').reset_index(drop=True)
     # Append power dissipation index [m^3 s^-2]
     # Method: get cubed sum of each storm's maximum winds and multiply it by the duration (in days) and correct for units
-    track_data['PDI'] = track_data.groupby('storm_id').apply(lambda x: ((x['max_wind']**3).sum() * x['duration'] * 86400)).rename('PDI').reset_index(drop=True)
+    track_data['PDI'] = track_data.groupby('storm_id').apply(lambda x: ((x['max_wind']**3).sum())).rename('PDI').reset_index(drop=True)
     
     return track_data
 
@@ -450,6 +447,9 @@ def describe(model_name: str,
 
     # Get number of TCs
     storm_count = len(track_data['raw']['storm_id'].unique())
+    # Get approximate number of storms per year
+    number_of_years = np.round((track_data['raw']['cftime'].max() - track_data['raw']['cftime'].min()).total_seconds() / 86400 / 365) # get approximate number of years
+    storm_count_per_year = np.round(storm_count / number_of_years)
     # Get duration of TCs
     storm_duration_raw = track_data['raw'].groupby('storm_id').first()['duration']
     storm_duration = storm_duration_raw[np.abs(sp.stats.zscore(storm_duration_raw) < 5)] # remove extreme outliers that may be a data processing anomaly
@@ -457,19 +457,18 @@ def describe(model_name: str,
     storm_max_wind = track_data['raw'].groupby('storm_id')['max_wind'].max()
     storm_min_pressure = track_data['raw'].groupby('storm_id')['min_slp'].min()
     # Get total run energy information
-    storm_ACE = track_data['raw'].groupby('storm_id')['ACE'].first()
-    storm_PDI = track_data['raw'].groupby('storm_id')['PDI'].first()
+    # storm_ACE = track_data['raw'].groupby('storm_id')['ACE'].first()
+    # storm_PDI = track_data['raw'].groupby('storm_id')['PDI'].first()
 
     print('-------------------------------------------------------------')
     print(f'Statistics for TCs in model: {
           model_name}; experiment: {experiment_name}')
-    print(f'Number of storms: {storm_count}')
+    print(f'Number of storms: total = {storm_count}; per year = {storm_count_per_year}')
     print(f'Storm duration: mean = {storm_duration.mean():.2f} +/- {storm_duration.std():.2f} days')
     print(f'Storm maximum winds: mean = {storm_max_wind.mean():.2f} +/- {storm_max_wind.std():.2f} m/s')
     print(f'Storm minimum pressure: mean = {storm_min_pressure.mean():.2f} +/- {storm_min_pressure.std():.2f} hPa')
-    print(f'Run-integrated global energy statistics: ACE = {storm_ACE.sum():.2e} m^2 s^-1; PDI = {storm_PDI.sum():.2e} m^3 s^-2')
+    # print(f'Run-integrated global energy statistics: ACE = {storm_ACE.sum():.2e} m^2 s^-1; PDI = {storm_PDI.sum():.2e} m^3 s^-2')
     print('-------------------------------------------------------------\n')
-
 
 def load_TC_tracks(model: str,
                    experiment: str,
@@ -487,57 +486,61 @@ def load_TC_tracks(model: str,
         print(f'[load_TC_tracks] model name: {model}, experiment name: {experiment}, year_range: {year_range}')
 
     for filename in os.listdir(storage_dirname):
-        filename_min_year_str, filename_max_year_str = filename.split('.')[
-            1].split('_')
-        filename_min_year, filename_max_year = filename_min_year_str.strip(
-            's'), filename_max_year_str.strip('e')
+        filename_min_year_str, filename_max_year_str = filename.split('.')[1].split('_')
+        filename_min_year, filename_max_year = filename_min_year_str.strip('s'), filename_max_year_str.strip('e')
 
         # Define conditions for data to meet
         model_flag = model_identifier in filename
         experiment_flag = experiment_identifier in filename
-        year_range_flag = min(year_range) >= int(
-            filename_min_year) and max(year_range) <= int(filename_max_year)
+        year_range_flag = min(year_range) >= int(filename_min_year) and max(year_range) <= int(filename_max_year)
 
         # If all conditions are met, load the data
         if model_flag and experiment_flag and year_range_flag:
             pathname = os.path.join(storage_dirname, filename)
-            print(f'Loading data for {model}, experiment {
-                  experiment} from {pathname}...')
+            print(f'Loading data for {model}, experiment {experiment} from {pathname}...')
             with open(pathname, 'rb') as f:
                 track_data = pickle.load(f)
-
-            # Filter the data by year range
-            year_adjustment = 0 if model == 'FLOR' else 1900
-            track_year_min, track_year_max = min(year_range) + year_adjustment, max(year_range) + year_adjustment
+            
             for key, value in track_data[model][experiment].items():
-                value = value.loc[(value['time'] >= f'{track_year_min:04d}-01-01') &
-                                  (value['time'] < f'{track_year_max:04d}-01-01')]
+                # Get cftime calendar time from iterand dataset, assuming all timestamp types are equivalent
+                calendar_type = value['cftime'].iloc[0].calendar
+
+                # Filter the data by year range by creating cftime objects
+                track_year_min_cftime, track_year_max_cftime = [cftime.datetime(year=min(year_range), month=1, day=1, calendar=calendar_type),
+                                                                cftime.datetime(year=max(year_range), month=1, day=1, calendar=calendar_type)]
+                
+                if diagnostic:
+                    print(f'Obtaining data from potential years {track_year_min_cftime} to {track_year_max_cftime}.')
+            
+                value = value.loc[(value['cftime'] >= track_year_min_cftime) &
+                                  (value['cftime'] <= track_year_max_cftime)]
+                
                 print(f'[load_TC_tracks] month range: {month_range}')
+                # Filter by month
+                # Note the inconsistency in time variables. Pandas datetime objects are easier for month filtering and month should be agnostic between time and cftime.
                 track_data[model][experiment][key] = value.loc[(value['time'].dt.month >= min(month_range)) & 
                                                                (value['time'].dt.month < max(month_range))]
+                
+            # Filter all storms for hurricanes, if the corresponding storm type (`C15w`) is selected
+            if storm_type == 'C15w':
+                # per Harris et al. (2016), doi.org/10.1175/JCLI-D-15-0389.1
+                hurricane_threshold = {'field': 'max_wind', 'value': 32}
+                for dataset_key, dataset_value in track_data[model][experiment].items():
+                    hurricane_storm_IDs = dataset_value.loc[dataset_value[hurricane_threshold['field']] > hurricane_threshold['value']]['storm_id'].unique()
+                    track_data[model][experiment][dataset_key] = dataset_value.loc[dataset_value['storm_id'].isin(hurricane_storm_IDs)]
 
             # Print statistics
             describe(model, experiment, track_data[model][experiment])
 
-    # Filter all storms for hurricanes, if the corresponding storm type (`C15w`) is selected
-    if storm_type == 'C15w':
-        # per Harris et al. (2016), doi.org/10.1175/JCLI-D-15-0389.1
-        hurricane_threshold = {'field': 'max_wind', 'value': 32}
-        for dataset_key, dataset_value in track_data[model][experiment].items():
-            hurricane_storm_IDs = dataset_value.loc[dataset_value[hurricane_threshold['field']]
-                                                    > hurricane_threshold['value']]['storm_id'].unique()
-            track_data[model][experiment][dataset_key] = dataset_value.loc[dataset_value['storm_id'].isin(
-                hurricane_storm_IDs)]
-
+    
     return track_data
-
 
 def TC_density(model_names: str | list,
                experiment_names: str | list,
                year_range: tuple[int, int],
                month_range: tuple[int, int]=(1, 13),
-               FLOR_year_adjustment=1900,
-               bin_resolution=5,
+               year_adjustment: int=0,
+               bin_resolution: int=5,
                storm_type: str = 'TS'):
     """
     Method to plot the daily spatial density of all TC occurrences given a track data dictionary. 
@@ -565,11 +568,14 @@ def TC_density(model_names: str | list,
     for model in model_names:
         data[model] = {}
         for experiment in experiment_names:
-            data[model][experiment] = load_TC_tracks(model, 
-                                                     experiment, 
-                                                     year_range, 
-                                                     month_range=month_range, 
-                                                     storm_type=storm_type)[model][experiment]
+            model_year_range = tuple([year + year_adjustment for year in year_range]) if model == 'IBTrACS' else year_range
+            experiment_name = '' if model == 'IBTrACS' else experiment
+            print(model, experiment_name, model_year_range)
+            data[model][experiment_name] = load_TC_tracks(model, 
+                                                          experiment_name, 
+                                                          model_year_range, 
+                                                          month_range=month_range, 
+                                                          storm_type=storm_type)[model][experiment_name]
 
     # Define binning windows
     longitude_bins = np.arange(0, 360 + bin_resolution, bin_resolution)
@@ -587,7 +593,7 @@ def TC_density(model_names: str | list,
             dataset = data[model][experiment]['raw']
             # Cut DataFrame by latitude and longitude bins
             densities = dataset.groupby([pd.cut(dataset['center_lat'], latitude_bins), pd.cut(
-                dataset['center_lon'], longitude_bins)]).count()['storm_num'].unstack()
+                dataset['center_lon'], longitude_bins)]).count()['storm_id'].unstack()
             densities.index, densities.columns = [
                 densities.index.categories.left.values, densities.columns.categories.left.values]
             # Concatenate to get comprehensive DataFrame

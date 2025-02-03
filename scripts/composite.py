@@ -231,14 +231,21 @@ def azimuthal_processor(data, field='wind_tangential', pressure_level=None, visu
     dataset = data.dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all') 
     visuals = {}
     
+    # print(dataset['slp'].dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all') .values)
+    pressure_field = dataset['slp'].dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
+
     # Check to see if storm-centered coordinate system exists. If not, build it.
     if 'TC_xt' not in dataset.coords:
         # Get new midpoints for trimmed data 
         center_x, center_y = len(dataset.grid_xt) // 2, len(dataset.grid_yt) // 2
+        print('From {1}, {0}...'.format(center_x, center_y))
+        center_x, center_y = np.unravel_index(np.argmin(pressure_field.values), pressure_field.shape)
+        print('... to {1}, {0}... to'.format(center_x, center_y))
+
         # Create coordinates for a TC-centric coordinate system (TC_xt, TC_yt)
         dataset = dataset.assign_coords({'TC_xt': dataset['grid_xt'] - dataset['grid_xt'].isel(grid_xt=center_x),
                                          'TC_yt': dataset['grid_yt'] - dataset['grid_yt'].isel(grid_yt=center_y)})
-    
+
     # 1. Create radial field relative to storm center.
     X, Y = np.meshgrid(dataset['TC_xt'], dataset['TC_yt'])
     dataset['radius'] = xr.DataArray(data=np.sqrt(X**2 + Y**2), dims=('grid_yt', 'grid_xt'))
@@ -255,6 +262,9 @@ def azimuthal_processor(data, field='wind_tangential', pressure_level=None, visu
     if r_limit < 0:
         # Get new midpoints for trimmed data 
         center_x, center_y = len(dataset.grid_xt) // 2, len(dataset.grid_yt) // 2
+        print('From {1}, {0}...'.format(center_x, center_y))
+        center_x, center_y = np.unravel_index(np.argmin(pressure_field.values), pressure_field.shape)
+        print('... to {1}, {0}... to'.format(center_x, center_y))
         # Create coordinates for a TC-centric coordinate system (TC_xt, TC_yt)
         dataset = dataset.assign_coords({'TC_xt': dataset['grid_xt'] - dataset['grid_xt'].isel(grid_xt=center_x),
                                          'TC_yt': dataset['grid_yt'] - dataset['grid_yt'].isel(grid_yt=center_y)})
@@ -608,10 +618,6 @@ def snapshot_collection(model, key, ds, field, pressure_level, intensity_bin, mi
         timestamps = [utilities.time_adjust(model, t, method='pandas_to_cftime') for t in timestamps 
                         if abs(t - timestamp_lmi) <= pd.Timedelta(n_days, "d")]
         
-        if diagnostic:
-            print('[composite.py, snapshot_collection()] Storm ID: {0} ----------------------------------------\n', storm_id)
-            print('\t', ds['track_output'].loc[ds['track_output']['time'].isin(timestamps)][['time', 'min_slp', 'max_wind']])
-            print('\t Timestamp with LMI: ', timestamp_lmi)
         # Process data for each filtered timestamp
         for i, timestamp in enumerate(timestamps):   
             # Assign the storm sub-ID

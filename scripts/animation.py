@@ -12,7 +12,7 @@ import matplotlib, matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings("ignore")
 
-from colormap_normalization import get_cmap, norm_cmap
+from visualization import get_cmap, norm_cmap
 
 def retrieve_tracked_TCs(dirname, storm_type, year_range=(101, 250)):
 
@@ -251,7 +251,6 @@ def get_data(model_name='HIRAM', experiment='control', storm_category='C15w', st
                                 grid_yt=slice(extent[2], extent[3]))
     
     return storm_data, model_data
-
 
 def animation(model_data, storm_data, param, lon_offset=180, max_frame=None, save_video=False):
     plt.rcParams["animation.html"] = "jshtml"

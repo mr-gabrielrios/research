@@ -432,7 +432,7 @@ def storm_generator(model_name: str,
     # 9. Append information from `track data` to netCDF object containing GCM output
     storm_gcm_data = join_track_GCM_data(storm_track_data, storm_gcm_data)
     # 10. Save xArray Dataset to netCDF file
-    save_storm_netcdf(model_name, experiment_name, storm_gcm_data)
+    save_storm_netcdf(storm_gcm_data, model_name, experiment_name)
     
 def main(model_name: str, 
          experiment_name: str, 

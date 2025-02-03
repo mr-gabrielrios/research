@@ -29,17 +29,22 @@ def cftime_calendar_type(timestamp: cftime.datetime) -> str:
     # Ensure timestamp is a cftime object
     assert 'cftime' in str(type(timestamp)), f'[utilities.cftime_calendar_reference()] Timestamp is not a cftime object.'
     # Get timestamp calendar type
-    timestamp_calendar = str(type(timestamp))
+    timestamp_calendar = timestamp.calendar
+    
+    return timestamp_calendar
+
+    # Preserving the old types
     # Define calendar types, with keys being the string outputs of type(`timestamp``), where timestamp is a cftime timestamp value.
     #                        and values being the calendar type to be assigned to a new cftime object
-    calendar_types = {"<class 'cftime._cftime.DatetimeJulian'>": 'julian',
-                      "<class 'cftime._cftime.DatetimeGregorian'>": 'gregorian',
-                      "<class 'cftime._cftime.datetime'>": 'noleap',
-                      "<class 'cftime._cftime.DatetimeNoLeap'>": 'noleap'}
+    # calendar_types = {"<class 'cftime._cftime.DatetimeJulian'>": 'julian',
+    #                   "<class 'cftime._cftime.DatetimeGregorian'>": 'gregorian',
+    #                   "<class 'cftime._cftime.datetime'>": 'standard',
+    #                   "<class 'cftime._cftime.DatetimeNoLeap'>": 'noleap'}
     
-    assert timestamp_calendar in calendar_types.keys(), f'[utilities.cftime_calendar_reference()] Calendar type {timestamp_calendar} not found in reference dictionary.'
+    # # Address the event that a cftime datetime type that is not covered here
+    # assert timestamp_calendar in calendar_types.keys(), f'[utilities.cftime_calendar_reference()] Calendar type {timestamp_calendar} not found in reference dictionary.'
     
-    return calendar_types[timestamp_calendar]
+    # return calendar_types[timestamp_calendar]
 
 def directories(model, experiment, data_type='model_output'):
     
@@ -106,7 +111,8 @@ def directories(model, experiment, data_type='model_output'):
                 'HIRAM-8xdaily': {'control': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/HIRAM/CTL1990s-8xdaily_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
                                               'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/HIRAM/CTL1990s-8xdaily_tigercpu_intelmpi_18_540PE/POSTP'},
                                   'swishe': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/HIRAM/work/CTL1990s_swishe-8xdaily_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
-                                             'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/HIRAM/CTL1990s_swishe-8xdaily_tigercpu_intelmpi_18_540PE/POSTP'}}}
+                                             'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/HIRAM/CTL1990s_swishe-8xdaily_tigercpu_intelmpi_18_540PE/POSTP'}},
+                'ERA5': {'reanalysis': {'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/reference/datasets/ERA5/POSTP'}}}
     
     return dirnames[model][experiment][data_type]
 
@@ -173,6 +179,7 @@ def postprocess_access(models: list,
                        experiments: list, 
                        fields: dict, 
                        year_range: tuple[int, int], 
+                       data_type: str,
                        FLOR_year_adjustment: int=2050,
                        diagnostic: bool=False) -> dict:
 
@@ -184,6 +191,7 @@ def postprocess_access(models: list,
     - experiments (list): list of experiment names corresponding to each model
     - fields (list): list of fields from which to obtain data
     - year_range (list or tuple, 2-item): list of years over which to obtain model data
+    - data_tye (str, optional): type of GCM output data type to look for (e.g., 'atmos_month', 'atmos_daily')
     - FLOR_year_adjustment (int, optional): number of years to adjust data for in FLOR
     Returns:
     - paths (dict): dictionary holding path names for model data, as well as model year ranges. 
@@ -214,6 +222,7 @@ def postprocess_access(models: list,
                              field in f and
                              domain in f and
                              level in f and
+                             data_type in f and
                              f.endswith('nc')]
                 # Filter files to ensure the year range requested is covered by the found data
                 filenames = [f for f in filenames if
@@ -231,6 +240,7 @@ def postprocessed_data_load(models: str | list[str],
                            fields: dict, 
                            year_range: tuple[int, int], 
                            month_range: tuple[int, int] = (1, 12),
+                           data_type: str='mean_month',
                            difference_experiment: tuple[str, str] | None = False,
                            load_full_time: bool=False):
 
@@ -270,7 +280,7 @@ def postprocessed_data_load(models: str | list[str],
     # Initialize container dictionary
     data = {model: {} for model in models}
     # Obtain path names and model years for the requested models, experiments, and fields
-    paths = postprocess_access(models, experiments, fields, year_range, FLOR_year_adjustment=0)
+    paths = postprocess_access(models, experiments, fields, year_range, data_type=data_type, FLOR_year_adjustment=0)
     # Iterate over each model to load data
     for model in models:
         start_year, end_year = ['{0:04d}-01-01'.format(min(paths[model]['year_range'])), 

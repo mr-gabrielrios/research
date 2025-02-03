@@ -63,45 +63,45 @@ def storm_period_binning(data, diagnostic=False):
     # Identify timestamp corresponding to LMI
     lmi = track['time'].loc[track['max_wind'] == track['max_wind'].max()]
     print('LMI occurs at {0}'.format(lmi))
-    
-    # Shift the locations where du_dt is calculated (differentials are calculated at the end of a given period, so this shifts it to the middle)
-    track['du_dt_period'] = track['du_dt_period'].shift(-(averaging_index_span//2))
+
     # Define absolute intensity bins (same for all storms)
     bins = [-np.inf, -2, 2, np.inf]
     # Define period names
-    period_names = ['weakening', 'peak', 'intensification']
+    period_names = ['intensification', 'weakening', 'peak']
+
     # Initialize dictionary
     periods = {}
     # Sample count
     num_samples = 3
     # Define times for future visualization of samplin
     sampling_times = {period: {} for period in period_names}
+    # DEfine sampling bins in decreasing order
+    sampling_bins = [bin for bin in track.groupby(pd.cut(track['du_dt_period'], bins))][::-1]
+    sampling_bins = [sampling_bins[0], sampling_bins[-1], sampling_bins[1]]
     # Iterate over each bin
-    for i, bin in enumerate(track.groupby(pd.cut(track['du_dt_period'], bins))):
+    for i, bin in enumerate(sampling_bins):
         # Unpack data (bin and data)
         bin_name, bin_data = bin
-        print(period_names[i])
-
+        print(period_names[i], bin_name)
+        
         # New method pseudocode
         # 1. identify LMI. This will tell me when I should look for peak/steady-state
         # 2. identify intensification period. This must be before LMI.
         # 3. identify peak/steady-state. This must be after intensification.
         # 4. identify weakening period. This must be after intensification and peak.
-    
+        
         # Iterate through data to find the most representative data point for each bin
         # If 'weakening', get most negative du_dt; if 'peak', get smallest du_dt; if 'strengthening', get maximum du_dt
         if period_names[i] == 'intensification':
             times = bin_data.sort_values('du_dt_period', ascending=False)
-            # times = times.loc[times < lmi] 
+            times = times.loc[times['time'] < lmi.values[0]] 
+        elif period_names[i] == 'weakening':
+            times = bin_data.sort_values('du_dt_period', ascending=True)
+            times = times.loc[times['time'] > lmi.values[0]]
         elif period_names[i] == 'peak':
             bin_data['du_dt_period'] = bin_data['du_dt_period'].abs()
-            times = bin_data.sort_values('du_dt_period', ascending=True)['time']
-            # times = times.loc[times['time'] < lmi]['time']
-        elif period_names[i] == 'weakening':
-            times = bin_data.sort_values('du_dt_period', ascending=True)['time']
-            # times = times.loc[times > lmi]
-
-        print(times)
+            times = bin_data.sort_values('du_dt_period', ascending=True)
+            times = times.loc[(times['time'] < min(periods['weakening']['time'])) & (times['time'] > min(periods['intensification']['time']))]['time']
         
         # If more sample are requested than available, use all available
         # Sampling method 1: get top 3 instances matching period-specific criteria
@@ -109,24 +109,24 @@ def storm_period_binning(data, diagnostic=False):
         # Sampling method 2: get 3 timestamps surrounding the timestamp most matching the period-matching criteria
         timestamp_index = times.index.values[0]        
         times = track['time'].iloc[[timestamp_index-1, timestamp_index, timestamp_index+1]]
-    
+        
         # Populate sample times for visualization
         sampling_times[period_names[i]] = [t for t in times.values]
         
         # Adjust timestamps from Pandas datetime to cftime formats
         timestamps = [utilities.time_adjust(model='HIRAM', timestamp=timestamp) for timestamp in times]
-    
+        
         # Initialize and populate datasets
         planar, vertical = [], []
         for timestamp in timestamps:
             planar.append(data['tc_model_output'].sel(time=timestamp))
             vertical.append(data['tc_vertical_output'].sel(time=timestamp))
-    
+        
         # Concatenate data
         planar, vertical = xr.concat(planar, dim='time'), xr.concat(vertical, dim='time')
         
         # Build dictionary for the  given intensification period
-        periods[period_names[i]] = {'bin': bin_name, 'time': timestamp}
+        periods[period_names[i]] = {'bin': bin_name, 'time': times}
         periods[period_names[i]]['data'] = {'planar': planar, 'vertical': vertical}
         # Diagnostic print statement
         if diagnostic:
@@ -146,7 +146,7 @@ def lifetime_plots(data, sampling_times, storm_id):
     axes[0].set_title('Maximum 10-meter winds', fontsize=10)
     axes[0].annotate('{0}'.format(storm_id), xy=(0.03, 0.95), xycoords='axes fraction', ha='left', va='top', fontsize=10)
     # Plot sampling points
-    period_colors = ['b', 'g', 'r']
+    period_colors = ['r', 'b', 'g']
     for p, period in enumerate(sampling_times.keys()):
         for t in sampling_times[period]:
             axes[0].axvline(t, alpha=0.5, c=period_colors[p])
@@ -228,7 +228,7 @@ def term_selection(periods):
 
     return periods
 
-def main(storms, troublshooting=True):
+def main(storms, troublshooting=False):
     output = []
     for storm in storms:
         print(storm)
@@ -249,11 +249,11 @@ def main(storms, troublshooting=True):
         # Generate plots to show where sampling occurs relative to the storm lifetime
         lifetime_plots(data, sampling_times, storm_id)
         # Build the MSE time tendency budget
-        # periods = term_selection(periods)
-        # output.append(periods)
+        periods = term_selection(periods)
+        output.append(periods)
     return output
 
-N = 1
+N = 15
 dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs/processed'
 outputs = {'control': [], 'swishe': []}
 for experiment in outputs.keys():
@@ -278,48 +278,50 @@ for n in range(0, min(len(outputs['control']), len(outputs['swishe']))):
     
 importlib.reload(visualization)
 
-experiment = 'swishe'
+experiment = 'control'
 
-budget_terms = {'dh_dt': '$\partial_t h$',
-                'thf': '$\ddot{q}_{\mathrm{surf}} = \\ddot{q}_h$ + $\\ddot{q}_l$',
-                'q_rad': '$\ddot{q}_{\mathrm{rad}} = \\ddot{q}_{SW}$ + $\\ddot{q}_{LW}$',
-                '-div_u_h': '$-\\nabla_h \cdot \\left(\\widehat{ \\mathbf{u}h }\\right) $'}
+for experiment in outputs.keys():
 
-for period in list(outputs[experiment][0].keys())[::-1]:
+    budget_terms = {'dh_dt': '$\partial_t h$',
+                    'thf': '$\ddot{q}_{\mathrm{surf}} = \\ddot{q}_h$ + $\\ddot{q}_l$',
+                    'q_rad': '$\ddot{q}_{\mathrm{rad}} = \\ddot{q}_{SW}$ + $\\ddot{q}_{LW}$',
+                    '-div_u_h': '$-\\nabla_h \cdot \\left(\\widehat{ \\mathbf{u}h }\\right) $'}
 
-    sample = outputs[experiment][0][period]['data']['budget']
-    
-    ncols = len(sample.keys())
-    fig, gs = plt.figure(figsize=(2*ncols, 4), dpi=96), matplotlib.gridspec.GridSpec(nrows=1, ncols=ncols)
+    for period in ['intensification', 'peak', 'weakening']:
 
-    for i, term in enumerate(sample.keys()):
-        print(period, term)
-        ax = fig.add_subplot(gs[0, i])
-        ax.set_title(budget_terms[term], y=1.35)
-
-        out = np.nanmean(np.stack([outputs[experiment][i][period]['data']['budget'][term] for i in range(0, len(outputs[experiment]))]), axis=0)
-    
-        norm, cmap = visualization.norm_cmap(out, term,
-                                             num_bounds=16, extrema=None, white_adjust=False) 
+        sample = outputs[experiment][0][period]['data']['budget']
         
-        im = ax.pcolormesh(sample[term].TC_xt, 
-                           sample[term].TC_yt, 
-                           out, norm=norm, cmap=cmap)
+        ncols = len(sample.keys())
+        fig, gs = plt.figure(figsize=(2*ncols, 4), dpi=96), matplotlib.gridspec.GridSpec(nrows=1, ncols=ncols)
+
+        for i, term in enumerate(sample.keys()):
+            print(period, term)
+            ax = fig.add_subplot(gs[0, i])
+            ax.set_title(budget_terms[term], y=1.35)
+
+            out = np.nanmean(np.stack([outputs[experiment][i][period]['data']['budget'][term] for i in range(0, len(outputs[experiment]))]), axis=0)
         
-        cax = ax.inset_axes([0, 1.05, 1, 0.05])
+            norm, cmap = visualization.norm_cmap(out, term,
+                                                num_bounds=16, extrema=None, white_adjust=False) 
+            
+            im = ax.pcolormesh(sample[term].TC_xt, 
+                            sample[term].TC_yt, 
+                            out, norm=norm, cmap=cmap)
+            
+            cax = ax.inset_axes([0, 1.05, 1, 0.05])
 
-        if sum(np.isnan(norm.boundaries)) == len(norm.boundaries):
-            norm = matplotlib.colors.Normalize()
-            colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax, orientation='horizontal')
-        else:
-            colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax, orientation='horizontal')
-        cax.xaxis.set_major_locator(matplotlib.ticker.AutoLocator())
-        cax.xaxis.tick_top()
-        cax.xaxis.set_label_position('top')
-    
-        if i > 0:
-            ax.set_yticklabels([])
-        ax.set_aspect('equal')
+            if sum(np.isnan(norm.boundaries)) == len(norm.boundaries):
+                norm = matplotlib.colors.Normalize()
+                colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax, orientation='horizontal')
+            else:
+                colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax, orientation='horizontal')
+            cax.xaxis.set_major_locator(matplotlib.ticker.AutoLocator())
+            cax.xaxis.tick_top()
+            cax.xaxis.set_label_position('top')
+        
+            if i > 0:
+                ax.set_yticklabels([])
+            ax.set_aspect('equal')
 
-    fig.tight_layout()
-    fig.suptitle(period, y=1)
+        fig.tight_layout()
+        fig.suptitle(period, y=1)

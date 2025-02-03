@@ -106,7 +106,7 @@ def snapshot_load(compositing_mode, model, experiment, storm_type, field, intens
         # Get a boolean criterion to parse for matching files
         matching_criteria = (compositing_mode_substr == compositing_mode) & (model_substr == model) & (experiment_substr == experiment) & \
                             (storm_type_substr == storm_type) & (field_substr == field) & (intensity_bin_substr == intensity_bin)
-        # diagnostic = True
+        
         if diagnostic:
             print('[composite_snapshots, snapshot_load()] Matching criteria:\n', 
                   compositing_mode_substr == compositing_mode, 
@@ -126,7 +126,7 @@ def snapshot_load(compositing_mode, model, experiment, storm_type, field, intens
             # Crude modification due to failure of correcting it during composite generation
             # This corrects the values for precipitation (kg/m2/s to mm/d)
             if compositing_mode == 'planar' and field == 'precip':
-                temp[field] = utilities.field_correction(temp[field], field)
+                temp[field] = utilities.field_correction(temp)[field]
             
             # Append to the output list of snapshots
             snapshot_stack.append(temp)
@@ -148,34 +148,107 @@ def snapshot_constructor(compositing_method, model, experiments, storm_type, fie
     
     return snapshots
 
+def wind_field_diagnostic(snapshot, diagnostic=False):
+    ''' This function checks to see that a snapshot satisfies pressure and wind criteria. '''
+    
+    # Find storm with pressure meeting the criterion
+    pressure_condition = False
+    max_pressure = 1000
+    
+    # Get minimum pressure
+    min_slp = snapshot['slp'].min()
+    pressure_condition = True if min_slp < max_pressure else False
+
+    # Define intensity metric
+    intensity_metric = 'wind' if 'wind' in snapshot.data_vars else 'slp'
+
+    # If a diagnostic flag is enabled, print the snapshot wind field regardless of whether or not the condition is mmet
+    if diagnostic:
+        center_x, center_y = [int(len(snapshot.grid_xt.values) / 2),
+                              int(len(snapshot.grid_yt.values) / 2)]
+        fig, ax = plt.subplots(figsize=(3.5, 3))
+        snapshot[intensity_metric].plot(ax=ax)
+        ax.axvline(snapshot['grid_xt'].isel(grid_xt=center_x), lw=0.5, ls='--', c='w')
+        ax.axhline(snapshot['grid_yt'].isel(grid_yt=center_y), lw=0.5, ls='--', c='w')
+        ax.set_title('slp: {0:.2f}; storm ID: {1}; pressure condition met: {2}'.format(snapshot['slp'].min().item(), 
+                                                                                       snapshot.attrs['storm_ID'],
+                                                                                       pressure_condition))
+    
+    # Return a false boolean if the condition is not met. 
+    # Check for wind field and return inner-core wind criterion boolean if presure condition is met.
+    if not pressure_condition:
+        if diagnostic:
+            print('Pressure condition not met.')
+        return False
+    else:
+        intensity_check = maximum_intensity_check(snapshot)
+        
+        return intensity_check
+
+def maximum_intensity_check(snapshot, field='slp'):
+    ''' This function checks to see that the maximum winds are in the domain center. '''
+    
+    # Flag to check if maximum wind is in the domain center
+    maximum_in_center = False
+    
+    # Get shape of domain
+    Y, X = snapshot[field].shape[0], snapshot[field].shape[1]
+    # Split domain into intervals - should be an even number to result in an odd domain split
+    split_interval = 6
+    intervals_x, intervals_y = [np.linspace(0, X, split_interval, dtype=int), 
+                                np.linspace(0, Y, split_interval, dtype=int)]
+    # Get the inner core index as the middle interval
+    inner_core_index = int(split_interval / 2)
+    # Define the slices to cut from to define the subdomain
+    inner_core_slice_x, inner_core_slice_y = [slice(intervals_x[inner_core_index - 1], intervals_x[inner_core_index]), 
+                                              slice(intervals_y[inner_core_index - 1], intervals_y[inner_core_index])]
+    inner_core = snapshot[field].isel(grid_xt=inner_core_slice_x, grid_yt=inner_core_slice_y)
+    # See if the maximum domain wind is found in the inner core, with a tolerance of 0.5 m/s. If the sum is greater than 0, proceed.
+    if field == 'wind':
+        inner_core_check = np.sum(np.where(np.isclose(snapshot['wind'].max(), inner_core, atol=0.5), True, False))
+    else:
+        inner_core_check = np.sum(np.where(np.isclose(snapshot['slp'].min(), inner_core, atol=1), True, False))
+
+    if inner_core_check > 0:
+        maximum_in_center = True
+
+    return maximum_in_center 
+
 def get_snapshot_weights(compositing_method, snapshots, experiments, intensity_bins=None, diagnostic=False):
 
     experiment_control, experiment_run = experiments
 
-    intensity_bins = np.arange(900, 1020, 4)
+    intensity_bins = np.arange(900, 1028, 8)
     intensity_distributions, intensity_distributions_binned = {}, {}
     for experiment in experiments:
         if compositing_method == 'planar':
-            [print(experiment, snapshot['slp'].min().item()) for snapshot in snapshots[experiment]]
             intensity_distributions[experiment] = np.array([snapshot['slp'].min().item() for snapshot in snapshots[experiment]])
         else:
             intensity_distributions[experiment] = np.array([snapshot.attrs['slp'] for snapshot in snapshots[experiment]])
         intensity_distributions_binned[experiment], _ = np.histogram(intensity_distributions[experiment], density=True, bins=intensity_bins)
 
+    # Weigh the control distribution to match the experiment distribution.
+    # This assumes that the control distribution is stronger than the experiment.
     weights = {}
     for experiment_index, experiment in enumerate(experiments):
         if experiment == experiment_control:
             raw_weights = intensity_distributions_binned[experiment_run] / intensity_distributions_binned[experiment_control]
-            # print(raw_weights)
-            # print('-------------')
-            filtered_weights = np.where(np.isfinite(raw_weights), raw_weights, 0)
-            # print(filtered_weights)
+            filtered_weights = raw_weights
+            # filtered_weights = np.where(np.isfinite(raw_weights), raw_weights, 0)
             weights[experiment] = {intensity_bins[i]: filtered_weights[i] for i in range(len(filtered_weights))}
         else:
             filtered_weights = np.repeat(1, len(intensity_distributions_binned[experiment]))
             weights[experiment] = {intensity_bins[i]: filtered_weights[i] for i in range(len(filtered_weights))}
         
-    diagnostic = True
+    # Check for non-finite numbers. If so, indicates that one of the bins has no samples. 
+    # Use this to normalize the experiment to the control for the offending bins.
+    # This was created to prevent the weaker experiment from skewing from the joint distribution median.
+    # In simpler words, the first loop nudged control to experiment, this nudges experiment to the nudged control
+    for bin, weight in weights[experiment_control].items():
+        if ~np.isfinite(weight):
+            weights[experiment_control][bin] = 0
+            weights[experiment_run][bin] = 0
+
     if diagnostic:
         fig, ax = plt.subplots(figsize=(4, 2))
         linestyles = ['-', '--']
@@ -186,10 +259,15 @@ def get_snapshot_weights(compositing_method, snapshots, experiments, intensity_b
 
     return intensity_bins, weights
 
-def weighted_snapshot_constructor(compositing_method, snapshots, experiments, weights, intensity_bins, diagnostic=False):
-    
+def weighted_snapshot_constructor(compositing_method, snapshots, experiments, weights, intensity_bins, field, diagnostic=False):
+
+    # Get xarray-compatible field name for pressure-level slices
+    xarray_field = field.split('hPa')[0] if 'hPa' in field else field
+
     # Initialize size for minimum dimension
-    min_x, min_y = np.nan, np.nan
+    min_x, min_y, max_x, max_y = np.nan, np.nan, np.nan, np.nan
+    # Grab superlative dimension coordinate values
+    dimension_x_coordinates, dimension_y_coordinates = None, None
     # Define dimensions for x and y
     dimension_x = 'radius' if 'azimuthal' in compositing_method else 'grid_xt'
     dimension_y = 'pfull' if 'azimuthal' in compositing_method else 'grid_yt'
@@ -219,29 +297,62 @@ def weighted_snapshot_constructor(compositing_method, snapshots, experiments, we
             # Get an integer value of repetitions for the given weight
             snapshot_repetitions = round(repetition_interval * np.round(snapshot_weight/repetition_interval))
             # Define new key:value pair where the key is the number of repetitions, and the value is the data
-            weighted_snapshots[experiment][storm_ID] = {'repetitions': snapshot_repetitions, 'data': snapshot}
+            weighted_snapshots[experiment][storm_ID] = {'repetitions': snapshot_repetitions, 'dataset': snapshot}
             # Add to the experiment-specific counter
             repetition_sample_size[experiment] += snapshot_repetitions
             if diagnostic:
-                print('[] Snapshot intensity: {0:.2f}; closest bin intensity: {1:.2f}; corresponding weight: {2:.2f}; number of reps: {3}'.format(intensity, closest_intensity, snapshot_weight, snapshot_repetitions))
+                print('[{4}] Snapshot intensity: {0:.2f}; closest bin intensity: {1:.2f}; corresponding weight: {2:.2f}; number of reps: {3}'.format(intensity, closest_intensity, snapshot_weight, snapshot_repetitions, experiment))
         if diagnostic:
             print('[composite_snapshots.py, weighted_snapshot_constructor()] Number of weighted snapshots for experiment {0}: {1}'.format(experiment, len(weighted_snapshots[experiment])))
             print('[] Number of unique snapshots: {0}; number of repetitions: {1}'.format(len(snapshots[experiment]), repetition_sample_size[experiment]))
         for storm_ID, _ in weighted_snapshots[experiment].items():
             # Trim the pressure levels for azimuthal dataset
             if compositing_method == 'azimuthal':
-                weighted_snapshots[experiment][storm_ID]['data'] = weighted_snapshots[experiment][storm_ID]['data'].sel(pfull=slice(100, 1000))
+                weighted_snapshots[experiment][storm_ID]['dataset'] = weighted_snapshots[experiment][storm_ID]['dataset'].sel(pfull=slice(100, 1000))
             # New repetition value is equal to (number of snapshot repetitions / number of total experiment repetitions)
             weighted_snapshots[experiment][storm_ID]['weight'] = weighted_snapshots[experiment][storm_ID]['repetitions'] / repetition_sample_size[experiment]
             # Check to see if dimension length is shorter than the existing threshold
-            length_x, length_y = len(weighted_snapshots[experiment][storm_ID]['data'][dimension_x]), len(weighted_snapshots[experiment][storm_ID]['data'][dimension_y])
+            length_x, length_y = len(weighted_snapshots[experiment][storm_ID]['dataset'][dimension_x]), len(weighted_snapshots[experiment][storm_ID]['dataset'][dimension_y])
+
+            # Save new coordinates if the maximum values are exceeded
+            if (dimension_x_coordinates is None) or (length_x > max_x):
+                dimension_x_coordinates = weighted_snapshots[experiment][storm_ID]['dataset'][dimension_x]
+            if ((dimension_y_coordinates is None) or (length_y > max_y)):
+                dimension_y_coordinates = weighted_snapshots[experiment][storm_ID]['dataset'][dimension_y]
+
             min_x = length_x if (np.isnan(min_x) or length_x < min_x) else min_x
             min_y = length_y if (np.isnan(min_y) or length_y < min_y) else min_y
-            
+            max_x = length_x if (np.isnan(max_x) or length_x > max_x) else max_x
+            max_y = length_y if (np.isnan(max_y) or length_y > max_y) else max_y
+
+    container_array = np.full(shape=(max_y, max_x), fill_value=np.nan)
+    
+    # Get half widths for slicing from domain centers based on 'min_x' and 'min_y'
+    half_width, half_height = np.rint(min_x/2), np.rint(min_y/2)
     # Make another pass so that all snapshots are trimmed to the group minima
     for experiment in experiments:
         for storm_ID in weighted_snapshots[experiment].keys():
-            weighted_snapshots[experiment][storm_ID]['data'] = weighted_snapshots[experiment][storm_ID]['data'].isel({dimension_x: slice(0, min_x)})
+            # Get iterand snapshot
+            subsnapshot = weighted_snapshots[experiment][storm_ID]['dataset']
+            # Size of the snapshot
+            subsnapshot_width, subsnapshot_height = subsnapshot[xarray_field].shape[1], subsnapshot[xarray_field].shape[0] 
+            # Get difference in sizes along x- and y-axes to locate the subsnapshot in the container. Will be minimum of zero by construction.
+            offset_x, offset_y = int(np.rint((container_array.shape[1] - subsnapshot_width)/2)), int(np.rint((container_array.shape[0] - subsnapshot_height)/2))
+            # Make a copy of the container array template
+            container_array = np.full(shape=(max_y, max_x), fill_value=np.nan)
+            subsnapshot_container = xr.Dataset(coords={dimension_x: ([dimension_x], dimension_x_coordinates.values),
+                                                       dimension_y: ([dimension_y], dimension_y_coordinates.values)},
+                                                       data_vars={xarray_field: (weighted_snapshots[experiment][storm_ID]['dataset'][xarray_field].dims, container_array)})
+            # For a planar cut, center the subsnapshot on the wrapper container. For an azimuthal one, align from the left-bottom corner.
+            if compositing_method == 'planar':
+                subsnapshot_container[xarray_field][{'grid_yt': range(offset_y, offset_y + subsnapshot_height), 
+                                              'grid_xt': range(offset_x, offset_x + subsnapshot_width)}] = subsnapshot[xarray_field].values
+            elif compositing_method == 'azimuthal':
+                subsnapshot_container[xarray_field][{'pfull': range(0, subsnapshot_height), 
+                                              'radius': range(0, subsnapshot_width)}] = subsnapshot[xarray_field].values
+            weighted_snapshots[experiment][storm_ID]['data'] = subsnapshot_container
+            del subsnapshot_container
+            
         if diagnostic:
             print('Snapshot stack length for experiment {0}: {1}'.format(experiment, len(weighted_snapshots[experiment])))
 
@@ -266,8 +377,7 @@ def stack_constructor(weighted_snapshots, experiments, field, diagnostic=False):
             snapshot_value_stack.append(w_i * x_i)
             snapshot_weight_stack.append(w_i)
             
-            # Ensure minimum number of repetitions is 1
-            r_i = 1 if r_i == 0 else r_i
+            # Perform repetitions for the bootstrap analysis
             for i in range(r_i):
                 snapshot_bootstrap_stack.append(x_i)
         
@@ -370,11 +480,25 @@ def main(mode, model, experiments, field, storm_type, intensity_bin, compositing
         else:
             snapshots = snapshots
 
+        # Make sure maximum wind for a TC is near the domain center. This filters out errant datasets.
+        if compositing_method == 'planar':
+            for experiment in experiments:
+                counter = 0
+                if diagnostic:
+                    print('{0} snapshots for {1}.'.format(len(snapshots[experiment]), experiment))
+                for index, snapshot in enumerate(snapshots[experiment]):
+                    filter = wind_field_diagnostic(snapshot, diagnostic=False)
+                    if not filter:
+                        counter -= 1
+                        snapshots[experiment].pop(index)
+                
+                print('{0:.2f}%  of snapshots converted based on meeting wind + pressure criteria.'.format(100*(len(snapshots[experiment]) + counter)/len(snapshots[experiment])))
+
         # Get snapshot intensity bins and weights from the preloaded distributions
         intensity_bins, weights = get_snapshot_weights(compositing_method, snapshots, experiments, intensity_bins=None, diagnostic=diagnostic)
 
         # Construct a dictionary with weighted snapshots using the calculated intensity bins and weights
-        weighted_snapshots = weighted_snapshot_constructor(compositing_method, snapshots, experiments, weights, intensity_bins, diagnostic=diagnostic)
+        weighted_snapshots = weighted_snapshot_constructor(compositing_method, snapshots, experiments, weights, intensity_bins, field=field, diagnostic=diagnostic)
         
         # Obtain snapshot stacks for bootstrapping
         _, bootstrapping_stack, _ = stack_constructor(weighted_snapshots, experiments, field, diagnostic=diagnostic)
