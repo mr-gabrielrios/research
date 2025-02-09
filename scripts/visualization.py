@@ -279,7 +279,13 @@ def field_properties(field):
                   'mld': {'long_name': 'mixed-layer depth', 'units': 'm'},
                   'q_atm': {'long_name': 'atmospheric heating', 'units': 'W m$^{-2}$'},
                   'net_lw': {'long_name': 'net longwave flux into atmosphere', 'units': 'W m$^{-2}$'},
-                  'swup_toa': {'long_name': 'upward shortwave flux at TOA', 'units': 'W m$^{-2}$'}}
+                  'swup_toa': {'long_name': 'upward shortwave flux at TOA', 'units': 'W m$^{-2}$'},
+                  'swdn_toa': {'long_name': 'downward shortwave flux at TOA', 'units': 'W m$^{-2}$'},
+                  'net_sw': {'long_name': 'net shortwave flux into atmosphere', 'units': 'W m$^{-2}$'},
+                  'swup_sfc': {'long_name': 'upwards shortwave flux at surface', 'units': 'W m$^{-2}$'},
+                  'swdn_sfc': {'long_name': 'downwards shortwave flux at surface', 'units': 'W m$^{-2}$'},
+                  'lwup_sfc': {'long_name': 'upwards longwave flux at surface', 'units': 'W m$^{-2}$'},
+                  'lwdn_sfc': {'long_name': 'downwards longwave flux at surface', 'units': 'W m$^{-2}$'}}
 
     if field in properties.keys():
         properties[field]['long_name'] = properties[field]['long_name'] + long_name_addendum
@@ -1179,7 +1185,7 @@ def basemap(fig, gs, model_name, experiment, year_range=None, row_num=0, col_num
         subplot_title_model = ax.annotate('{0}{1}'.format(model_name, year_range_str),
                                           (0, title_y), va='baseline', ha='left', xycoords='axes fraction', fontsize=label_fontsize)
     # Set right-hand side to be {experiment name}
-    experiment_name = 'SWISHE' if experiment == 'CTL1990s_swishe' else 'CTL' if experiment == 'CTL1990s' else 'CTL-EXP' if '-' in experiment else experiment# override for publicatiom
+    experiment_name = 'SWISHE' if experiment == 'CTL1990s_swishe' else 'CTL' if experiment == 'CTL1990s' else 'EXP-CTL' if '-' in experiment else experiment# override for publicatiom
     subplot_title_experiment = ax.annotate('{0}'.format(experiment_name), (1, title_y), va='baseline', ha='right', 
                                            xycoords='axes fraction', fontsize=label_fontsize)
 

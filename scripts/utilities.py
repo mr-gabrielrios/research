@@ -74,6 +74,15 @@ def directories(model, experiment, data_type='model_output'):
                                               'model_output': '/projects/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s_ewishe8X_tiger3/POSTP'},
                           'CTL1990s_swishe_plus2K': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_plus2K_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                                      'model_output': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_plus2K_tigercpu_intelmpi_18_540PE/POSTP'}},
+                'AM2.5_HH': {'CTL1990s': {'track_data': '/projects/GEOCLIM/hhe/Analyses/TC-detection/AM2.5/CTL1990s_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k'},
+                             'CTL1990s_minus2K': {'track_data': '/projects/GEOCLIM/hhe/Analyses/TC-detection/AM2.5/CTL1990s_minus2K_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k'},
+                             'CTL1990s_minus4K': {'track_data': '/projects/GEOCLIM/hhe/Analyses/TC-detection/AM2.5/CTL1990s_minus4K_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k'},
+                             'CTL1990s_minus6K': {'track_data': '/projects/GEOCLIM/hhe/Analyses/TC-detection/AM2.5/CTL1990s_minus6K_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k'},
+                             'CTL1990s_minus8K': {'track_data': '/projects/GEOCLIM/hhe/Analyses/TC-detection/AM2.5/CTL1990s_minus8K_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k'},
+                             'CTL1990s_plus2K': {'track_data': '/projects/GEOCLIM/hhe/Analyses/TC-detection/AM2.5/CTL1990s_plus2K_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k'},
+                             'CTL1990s_plus4K': {'track_data': '/projects/GEOCLIM/hhe/Analyses/TC-detection/AM2.5/CTL1990s_plus4K_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k'},
+                             'CTL1990s_plus6K': {'track_data': '/projects/GEOCLIM/hhe/Analyses/TC-detection/AM2.5/CTL1990s_plus6K_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k'},
+                             'CTL1990s_plus8K': {'track_data': '/projects/GEOCLIM/hhe/Analyses/TC-detection/AM2.5/CTL1990s_plus8K_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k'},},
                 'AM2.5C360': {'CTL1990s': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5C360/work/CTL1990s_tigercpu_intelmpi_18_1080PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                            'model_output': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5C360/work/CTL1990s_tigercpu_intelmpi_18_1080PE/POSTP'},
                               'CTL1990s_swishe': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5C360/work/CTL1990s_swishe_tigercpu_intelmpi_18_1080PE/analysis_lmh/cyclones_gav_ro110_330k',
@@ -224,6 +233,8 @@ def postprocess_access(models: list,
                              level in f and
                              data_type in f and
                              f.endswith('nc')]
+                if diagnostic:
+                    print([f'Filename {f} found before year filtering over years {model_year_range}.' for f in filenames])
                 # Filter files to ensure the year range requested is covered by the found data
                 filenames = [f for f in filenames if
                              int(f.split('.nc')[0].split('-')[-1].split('_')[0]) <= min(model_year_range) and
@@ -242,7 +253,8 @@ def postprocessed_data_load(models: str | list[str],
                            month_range: tuple[int, int] = (1, 12),
                            data_type: str='mean_month',
                            difference_experiment: tuple[str, str] | None = False,
-                           load_full_time: bool=False):
+                           load_full_time: bool=False,
+                           return_paths: bool=False) -> dict | tuple[dict, dict]:
 
     '''
     Loads data for a given list of models, experiments, and fields.
@@ -297,7 +309,7 @@ def postprocessed_data_load(models: str | list[str],
             month_range_filter = month_selector(data[model][experiment]['time.month'], min(month_range), max(month_range))
             data[model][experiment] = data[model][experiment].sel(time=month_range_filter)
             # Correct field data for units
-            data[model][experiment] = field_correction(data[model][experiment])
+            data[model][experiment] = field_correction(model, data[model][experiment])
 
     # Generate the difference experiment dataset based on inputs, iterating over each model
     if difference_experiment:
@@ -315,7 +327,10 @@ def postprocessed_data_load(models: str | list[str],
             else:
                 print('Not all experiments loaded to compute difference between experiments {0} and {1}. The only experiments loaded are: {2}'.format(experiment_CTL, experiment_EXP, experiments))
     
-    return data
+    if return_paths:
+        return (data, paths)
+    else:
+        return data
 
 def time_adjust(model=None, timestamp=None, method='pandas_to_cftime'):
     """Method to adjust datetime conventions.
@@ -918,7 +933,8 @@ def pull_resampled_data(filename, field, month=None, troubleshooting=False):
     else:
         print('Data not available for {0} {1} {2}, consider pulling it using gcm_scraper_jupyter.ipynb...'.format(model_name, experiment_name, field))
 
-def field_correction(data):
+def field_correction(model_name: str,
+                     data):
     '''
     Function to correct sign and apply multiplicative factor for specific fields.
     '''
@@ -926,7 +942,11 @@ def field_correction(data):
     def assignment(d):
         output = d.copy()
         for field in d.data_vars:
-            factor = 86400 if field in ['precip', 'evap', 'p-e'] else 1 # kg m^-2 s^-1 to mm d^-1
+            if field in ['precip', 'evap', 'p-e']:
+                # Conversion of total precipitation per hour to daily precipitation rate for ERA5 data, instantaneous rate to daily for GFDL GCM data
+                factor = (1 / 3600) * 1000 * 86400 if model_name == 'ERA5' else 86400
+            else:
+                factor = 1
             output[field] = d[field] * factor
             _, output[field].attrs['units'] = visualization.field_properties(field)
         return output
@@ -1020,6 +1040,26 @@ def ocean_grid_alignment(dataset):
                 dataset = dataset.rename({dim: ocean_coord_names[dim]})
 
     return dataset
+
+def circular_mask(X: np.array,
+                  Y: np.array,
+                  x: int|float,
+                  y: int|float,
+                  outer_radius: int|float,
+                  inner_radius: int|float=0) -> np.array:
+    
+    '''
+    Given a center point (`x`, `y`) and an outer radius `outer_radius`, obtain a boolean mask for the circle around the point. 
+    This boolean mask is meant to be applied to a 2-D numeric array.
+    `X` and `Y` must be basis vectors.
+    Functionality provided for inner radius filtering also, but defaults to 0. 
+    '''
+    
+    # Generate the boolean mask
+    mask = ((((X - x) ** 2 + (Y - y) ** 2) >= inner_radius ** 2) &
+            (((X - x) ** 2 + (Y - y) ** 2) <= outer_radius ** 2))
+    
+    return mask
 
 ############################################################
 # Begin numba-specific parallelization methods.

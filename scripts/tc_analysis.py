@@ -475,6 +475,7 @@ def load_TC_tracks(model: str,
                    year_range: tuple[int, int],
                    month_range: tuple[int, int]=(1, 13),
                    storm_type: str = 'TS',
+                   print_statistics: bool=False,
                    diagnostic: bool = False):
 
     storage_dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage/track_data'
@@ -515,7 +516,6 @@ def load_TC_tracks(model: str,
                 value = value.loc[(value['cftime'] >= track_year_min_cftime) &
                                   (value['cftime'] <= track_year_max_cftime)]
                 
-                print(f'[load_TC_tracks] month range: {month_range}')
                 # Filter by month
                 # Note the inconsistency in time variables. Pandas datetime objects are easier for month filtering and month should be agnostic between time and cftime.
                 track_data[model][experiment][key] = value.loc[(value['time'].dt.month >= min(month_range)) & 
@@ -530,7 +530,8 @@ def load_TC_tracks(model: str,
                     track_data[model][experiment][dataset_key] = dataset_value.loc[dataset_value['storm_id'].isin(hurricane_storm_IDs)]
 
             # Print statistics
-            describe(model, experiment, track_data[model][experiment])
+            if print_statistics:
+                describe(model, experiment, track_data[model][experiment])
 
     
     return track_data
