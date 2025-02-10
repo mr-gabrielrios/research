@@ -24,16 +24,19 @@ days is defined such that the days before and after a given timestamp are includ
 climatology.
 '''
 
-import xarray as xr
+import argparse
+
 import cartopy, cartopy.crs as ccrs, matplotlib, matplotlib.pyplot as plt
-import importlib
 import cftime
 import functools
+import importlib
 import numpy as np
 import os
 import pandas as pd
 import random
+import sys
 import time
+import xarray as xr
 from multiprocessing import Pool
 
 import derived
@@ -170,43 +173,6 @@ def grid_interpolation(working_grid: xr.Dataset,
     interpolated_working_grid = working_grid.interp(grid_xt=interpolation_array_x).interp(grid_yt=interpolation_array_y)
 
     return interpolated_working_grid
-
-def get_surface_area(storm_dataset_timestamp: xr.DataArray,
-                     diagnostic: bool=False) -> xr.DataArray:
-
-    # Load surface area data from GFDL GCM output
-    surface_area = xr.open_dataset('/projects/GEOCLIM/gr7610/tools/AM2.5_atmos_area.nc')['__xarray_dataarray_variable__']
-
-    # Shed null values
-    storm_dataset_timestamp = storm_dataset_timestamp.dropna('grid_xt', how='all').dropna('grid_yt', how='all')
-    # Get minimum and maximum spatial extent values
-    minimum_longitude, maximum_longitude = [storm_dataset_timestamp['grid_xt'].min().item(), 
-                                            storm_dataset_timestamp['grid_xt'].max().item()]
-    minimum_latitude, maximum_latitude = [storm_dataset_timestamp['grid_yt'].min().item(), 
-                                          storm_dataset_timestamp['grid_yt'].max().item()]
-    # Round values due to weird GFDL GCM output behavior
-    minimum_longitude, maximum_longitude = [np.round(minimum_longitude, decimals=4),
-                                            np.round(maximum_longitude, decimals=4)]
-    minimum_latitude, maximum_latitude = [np.round(minimum_latitude, decimals=4),
-                                          np.round(maximum_latitude, decimals=4)]
-    # Get surface area at iterand timestamp
-    surface_area_timestamp = surface_area.sel(grid_xt=slice(minimum_longitude, maximum_longitude),
-                                              grid_yt=slice(minimum_latitude, maximum_latitude))
-
-    # Interpolate area onto storm coordinates
-    interpolated_surface_area_timestamp = grid_interpolation(surface_area_timestamp, storm_dataset_timestamp)
-
-    if diagnostic:
-        print('------------------------------------')
-        print(f'Window extent: longitudes = {(minimum_longitude, maximum_longitude)} and latitudes= {(minimum_latitude, maximum_latitude)}')
-        print(f'[get_surface_area()]: Storm dataset latitudes:\n{storm_dataset_timestamp.grid_yt.values}')
-        print(f'[get_surface_area()]: Surface area dataset latitudes:\n{interpolated_surface_area_timestamp.grid_yt.values}')
-
-    # Make sure all longitudes and latitudes are within some tolerance of each other
-    assert np.allclose(storm_dataset_timestamp.grid_xt, interpolated_surface_area_timestamp.grid_xt), f'\nData longitudes:\n{storm_dataset_timestamp.grid_xt.values}; \n Surface area longitudes:\n{surface_area_timestamp.grid_xt.values}'
-    assert np.allclose(storm_dataset_timestamp.grid_yt, interpolated_surface_area_timestamp.grid_yt), f'\nData latitude:\n{storm_dataset_timestamp.grid_yt.values}; \n Surface area latitudes:\n{surface_area_timestamp.grid_yt.values}'
-
-    return interpolated_surface_area_timestamp
 
 def get_surface_area(storm_dataset_timestamp: xr.DataArray,
                      diagnostic: bool=False) -> xr.DataArray:
@@ -435,7 +401,7 @@ def save_TC_anomaly(pathname: str,
 def main(model_name: str,
          experiment_name: str,
          year_range: tuple[int, int],
-         field_name: str,
+         field_names: str|list[str],
          basin_name: str='global',
          intensity_parameter: str='min_slp',
          intensity_range: tuple[int|float, int|float]=(0, np.inf),
@@ -461,37 +427,76 @@ def main(model_name: str,
         pathnames = [pathname for pathname in pathnames if basin_name in pathname]
     # Stop the script if no files matching the input criteria are found.
     assert len(pathnames) > 0, f'No files found matching the criteria provided.'
+    
+    # Ensure that field names is a list
+    if isinstance(field_names, str):
+        field_names = [field_names]
+    elif isinstance(field_names, list) | isinstance(field_names, tuple):
+        field_names = field_names
+    else:
+        print(f'Field names must be provided in an iterable or string format. Current type is {type(field_names)}. Please correct.')
+        sys.exit()
 
     # Process each path
     for pathname in pathnames:
-        print(f'Pulling data from filename {pathname}.')
-        # Get anomaly for an individual TC
-        TC_anomaly_dataset = get_TC_anomaly(model_name, 
-                                            experiment_name,
-                                            field_name,
-                                            year_range,
-                                            time_window_size,
-                                            space_window_size,
-                                            pathname,
-                                            parallel=parallel)
-        # Save the data to a custom location
-        save_TC_anomaly(pathname=pathname,
-                        anomaly_dataset=TC_anomaly_dataset,
-                        field_name=field_name,
-                        time_window_size=time_window_size,
-                        space_window_size=space_window_size)
+        for field_name in field_names:
+            print(f'Pulling data from filename {pathname} for field name {field_name}.')
+            # Get anomaly for an individual TC
+            TC_anomaly_dataset = get_TC_anomaly(model_name, 
+                                                experiment_name,
+                                                field_name,
+                                                year_range,
+                                                time_window_size,
+                                                space_window_size,
+                                                pathname,
+                                                parallel=parallel)
+            # Save the data to a custom location
+            save_TC_anomaly(pathname=pathname,
+                            anomaly_dataset=TC_anomaly_dataset,
+                            field_name=field_name,
+                            time_window_size=time_window_size,
+                            space_window_size=space_window_size)
 
 if __name__ == '__main__':
-    model_name = 'FLOR'
-    experiment_name = 'CTL1990s_FA_tiger3'
-    year_range = (1901, 1902)
-    field_name = 'WVP'
-    intensity_parameter = 'min_slp'
-    intensity_range = (970, 980)
+    
+    ''' Initialize user input/output section. '''
+    # Catch user inputs
+    parser = argparse.ArgumentParser()
+    
+    # Required inputs
+    parser.add_argument('--model_name', type=str, help="Name of the model to extract data from.", required=True)
+    parser.add_argument('--experiment_name', type=str, help="Name of the experiment to extract GCM data from.", required=True)
+    parser.add_argument('--year_range', type=str, help="Range of years to search for TCs over. Provide input in `YYYY:YYYY` format.", required=True)
+    parser.add_argument('--field_names', type=str, help="Name of the GCM output field to extract anomaly data for. Provide input in `FIELD:FIELD:FIELD` format.", required=True)
+    # Optional inputs
+    parser.add_argument('--basin_name', nargs='?', default='global', type=str, help="Name of the TC basin to search for.")
+    parser.add_argument('--intensity_parameter', nargs='?', default='min_slp', type=str, help="Intensity parameter for TC filtering. Either `min_slp` or `max_wind`.")
+    parser.add_argument('--intensity_range', nargs='?', default='0:1020', type=str, help="Range of values over which to search for TCs for the given intensity range. Provide input in `X:Y` format.")
+    parser.add_argument('--number_of_storms', nargs='?', default=1, type=int, help="Number of TCs to generate anomaly data for.")
+    parser.add_argument('--time_window_size', nargs='?', default=3, type=int, help="Number of days to search for climatological data over (before and after TC timestamp).")
+    parser.add_argument('--space_window_size', nargs='?', default=10, type=int, help="Number of degrees to search for climatological data over (degrees around TC timestamp).")
+    parser.add_argument('--parallel', nargs='?', default=True, type=bool, help="Boolean to dictate whether data should be processed in parallel.")
+    # Process inputs
+    args = parser.parse_args()
+    
+    # Process format-dependent arguments
+    if ':' in args.field_names:
+        args.field_names = tuple([field_name for field_name in args.field_names.split(':')])
+    args.year_range = tuple([int(year) for year in args.year_range.split(':')])
+    args.intensity_range = tuple([int(bound) for bound in args.intensity_range.split(':')])
+    # Print arguments for diagnostic
+    print(f'------------------------------------------------------------------\n{args}\n------------------------------------------------------------------')
+    
+    ''' End user input/output section. '''
         
-    main(model_name=model_name,
-         experiment_name=experiment_name,
-         year_range=year_range,
-         field_name=field_name,
-         intensity_parameter=intensity_parameter,
-         intensity_range=intensity_range)
+    main(model_name=args.model_name,
+         experiment_name=args.experiment_name,
+         year_range=args.year_range,
+         field_names=args.field_names,
+         basin_name=args.basin_name,
+         intensity_parameter=args.intensity_parameter,
+         intensity_range=args.intensity_range,
+         number_of_storms=args.number_of_storms,
+         time_window_size=args.time_window_size,
+         space_window_size=args.space_window_size,
+         parallel=args.parallel)
