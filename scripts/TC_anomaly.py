@@ -279,6 +279,7 @@ def get_TC_anomaly_timestamp(model_name: str,
                              sampling_timestamp: cftime.datetime,
                              diagnostic: bool=False):
     
+    
     # Get timestamp
     storm_sample = storm_reanalysis_data.sel(time=sampling_timestamp)
     sampling_timestamp = storm_sample.time.item()
@@ -304,19 +305,32 @@ def get_TC_anomaly_timestamp(model_name: str,
 
     # Interpolate the GCM data to the storm data
     sample_GCM_data = grid_interpolation(sample_GCM_data, storm_sample)
+    # Ensure that TC sample and extracted GCM data are equal in size
+    assert len(sample_GCM_data.grid_xt) == len(storm_sample.grid_xt), 'Incompatible grid along x-axis.'
+    assert len(sample_GCM_data.grid_yt) == len(storm_sample.grid_yt), 'Incompatible grid along y-axis.'
 
-    # Get simple anomaly
-    TC_climatological_anomaly_timestamp = storm_sample[field_name] - sample_GCM_data[field_name]
-
+    # If the axis coordinates are similar within some tolerance, set them equal
+    # This is brute-force, but avoids annoying incompatibilities based on floating point precision errors
+    if np.max(abs(sample_GCM_data.grid_xt.values - storm_sample.grid_xt.values)) < 1e-6:
+        sample_GCM_data = sample_GCM_data.assign_coords(grid_xt=storm_sample.grid_xt)
+    if np.max(abs(sample_GCM_data.grid_yt.values - storm_sample.grid_yt.values)) < 1e-6:
+        sample_GCM_data = sample_GCM_data.assign_coords(grid_yt=storm_sample.grid_yt)
+        
+    # Get simple anomaly and generate a new Dataset
+    a, b = xr.align(storm_sample[field_name], sample_GCM_data[field_name], join='left')
+    TC_climatological_anomaly_timestamp = (a - b)
     storm_ID = storm_sample.attrs['storm_id']
-    TC_climatological_anomaly_timestamp = xr.Dataset(data_vars={field_name: (['storm_id', 'grid_yt', 'grid_xt'], 
-                                                                             np.expand_dims(TC_climatological_anomaly_timestamp.data, axis=0))},
+    TC_climatological_anomaly_dataset = xr.Dataset(data_vars={field_name: (['storm_id', 'grid_yt', 'grid_xt'], 
+                                                                             np.expand_dims(TC_climatological_anomaly_timestamp.values, axis=0))},
                                                      coords={'storm_id': ('storm_id', [storm_ID]),
                                                              'grid_yt': ('grid_yt', TC_climatological_anomaly_timestamp.grid_yt.values),
-                                                             'grid_xt': ('grid_xt', TC_climatological_anomaly_timestamp.grid_xt.values)},
-                                                     attrs=sample_GCM_data.attrs)
+                                                             'grid_xt': ('grid_xt', TC_climatological_anomaly_timestamp.grid_xt.values)})
+
+    # Check to ensure the difference in grid spacing in both directions is constant within some tolerance.
+    assert np.max(abs(np.diff(TC_climatological_anomaly_timestamp.grid_xt.diff('grid_xt'))) < 1e-6), 'Irregular grid along x-axis.'
+    assert np.max(abs(np.diff(TC_climatological_anomaly_timestamp.grid_yt.diff('grid_yt'))) < 1e-6), 'Irregular grid along y-axis.'
     
-    return TC_climatological_anomaly_timestamp
+    return TC_climatological_anomaly_dataset
 
 def get_TC_anomaly(model_name: str, 
                    experiment_name: str,
@@ -376,6 +390,17 @@ def get_TC_anomaly(model_name: str,
     
     return TC_anomaly_dataset
 
+# Perform a grid check
+def check_grid(reference_grid: xr.DataArray,
+               print_string: str|None=None):
+    # Get differences in grid spacing along each vector
+    d_grid_yt = reference_grid['grid_yt'].diff(dim='grid_yt')
+    d_grid_xt = reference_grid['grid_xt'].diff(dim='grid_xt')
+    # Ensure that the differences are equivalent for all indices to ensure equal spacing
+    grid_tolerance = 1e-6
+    assert sum(d_grid_xt.diff(dim='grid_xt') < grid_tolerance) == len(d_grid_xt) - 1, f'Grid is irregular along the `grid_xt` axis at timestamp {print_string}.'
+    assert sum(d_grid_yt.diff(dim='grid_yt') < grid_tolerance) == len(d_grid_yt) - 1, f'Grid is irregular along the `grid_yt` axis at timestamp {print_string}.'
+
 def save_TC_anomaly(pathname: str,
                     anomaly_dataset: xr.Dataset,
                     field_name: str,
@@ -393,10 +418,13 @@ def save_TC_anomaly(pathname: str,
     anomaly_filename = f'{TC_filename.split('.nc')[0]}.anomaly-{field_name}.anomaly_window_size-space_{space_window_size}-time_{time_window_size}.nc'
     # Create pathname
     anomaly_pathname = os.path.join(dirname, anomaly_filename)
-    
-    # Save Dataset to file
-    print(f'Saving anomaly dataset for {field_name} with spatial window size {space_window_size} deg and temporal window size {time_window_size} days to file {anomaly_pathname}...')
-    anomaly_dataset.to_netcdf(anomaly_pathname)
+    # If pathname exists, do not overwrite. Else, save
+    if os.path.exists(anomaly_pathname):
+        print(f'Dataset already exists at {pathname}, continue...')
+    else:
+        # Save Dataset to file
+        print(f'Saving anomaly dataset for {field_name} with spatial window size {space_window_size} deg and temporal window size {time_window_size} days to file {anomaly_pathname}...')
+        anomaly_dataset.to_netcdf(anomaly_pathname)
 
 def main(model_name: str,
          experiment_name: str,
@@ -450,6 +478,10 @@ def main(model_name: str,
                                                 space_window_size,
                                                 pathname,
                                                 parallel=parallel)
+            
+            # Perform a grid check
+            check_grid(TC_anomaly_dataset)
+            
             # Save the data to a custom location
             save_TC_anomaly(pathname=pathname,
                             anomaly_dataset=TC_anomaly_dataset,
