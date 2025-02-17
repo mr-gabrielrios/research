@@ -189,8 +189,9 @@ def postprocess_access(models: list,
                        fields: dict, 
                        year_range: tuple[int, int], 
                        data_type: str,
-                       FLOR_year_adjustment: int=2050,
-                       diagnostic: bool=False) -> dict:
+                       FLOR_year_adjustment: int=0,
+                       search_directory: str|None=None,
+                       diagnostic: bool=False,) -> dict:
 
     '''
     Determine path names for files from which climate model output data will be obtained.
@@ -207,8 +208,9 @@ def postprocess_access(models: list,
                     Dictionary structure is: paths{model: {year_range, path}}
     '''
 
+    diagnostic = False
     # Directory holding post-processed climate model data
-    dirname = '/tigress/GEOCLIM/gr7610/analysis/model_out'
+    dirname = search_directory if search_directory else '/tigress/GEOCLIM/gr7610/analysis/model_out'
     # Initialize data structure to hold pathnames and model year ranges for each model and experiment configuration
     paths = {model: {} for model in models}
     # Find matching data for each model and experiment
@@ -228,9 +230,9 @@ def postprocess_access(models: list,
                 filenames = [f for f in os.listdir(dirname) if
                              model in f and 
                              '{0}-'.format(experiment) in f and 
-                             field in f and
+                             f'{field}-' in f and
                              domain in f and
-                             level in f and
+                             (f'{level}hPa' in f or f'{level}m' in f) and
                              data_type in f and
                              f.endswith('nc')]
                 if diagnostic:
@@ -254,7 +256,9 @@ def postprocessed_data_load(models: str | list[str],
                            data_type: str='mean_month',
                            difference_experiment: tuple[str, str] | None = False,
                            load_full_time: bool=False,
-                           return_paths: bool=False) -> dict | tuple[dict, dict]:
+                           load_data: bool=False,
+                           return_paths: bool=False,
+                           search_directory: str|None=None) -> dict | tuple[dict, dict]:
 
     '''
     Loads data for a given list of models, experiments, and fields.
@@ -292,7 +296,7 @@ def postprocessed_data_load(models: str | list[str],
     # Initialize container dictionary
     data = {model: {} for model in models}
     # Obtain path names and model years for the requested models, experiments, and fields
-    paths = postprocess_access(models, experiments, fields, year_range, data_type=data_type, FLOR_year_adjustment=0)
+    paths = postprocess_access(models, experiments, fields, year_range, data_type=data_type, search_directory=search_directory)
     # Iterate over each model to load data
     for model in models:
         start_year, end_year = ['{0:04d}-01-01'.format(min(paths[model]['year_range'])), 
@@ -328,7 +332,10 @@ def postprocessed_data_load(models: str | list[str],
                 print('Not all experiments loaded to compute difference between experiments {0} and {1}. The only experiments loaded are: {2}'.format(experiment_CTL, experiment_EXP, experiments))
     
     if return_paths:
-        return (data, paths)
+        if load_data:
+            return (data.load(), paths)
+        else:
+            return (data, paths)
     else:
         return data
 
@@ -1097,7 +1104,12 @@ def _apply_along_axis_0(func1d, arr, out):
 def nb_mean_axis_0(arr):
     return apply_along_axis_0(np.nanmean, arr)
 
-def bootstrap_3d(a, b, plane=None, N=1000, level=0.95):
+def bootstrap_3d(a: xr.DataArray, 
+                 b: xr.DataArray,
+                 plane: str, 
+                 N: int=1000,
+                 confidence_level: float=0.95, 
+                 coarsen_factor: int|None=None):
     '''
     Method to run bootstrap statistical testing on 3-dimensional model output. Dimensions include time, grid_xt (longitude), grid_yt (latitude).
     Current method diagnoses difference in means and establishes statistical significance for a given level from 0 to 1.
@@ -1105,42 +1117,78 @@ def bootstrap_3d(a, b, plane=None, N=1000, level=0.95):
     Parallel approach produces a speedup of ~4x.
     See Delsole and Tippett (2013), Chapter 3.6 for details.
     '''
-
-    x_axis = 2
-    y_axis = 1
-    time_axis = 0
+    
+    # Checks to make sure inputs are of the proper data types
+    assert ('DataArray' in str(type(a))) & ('DataArray' in str(type(b))), 'Input arrays must be xArray DataArrays.'
+    
+    # Perform data coarsening, if requested
+    if coarsen_factor:
+        a = a.coarsen(grid_xt=coarsen_factor, grid_yt=coarsen_factor).mean() if plane == 'xy' else a
+        b = b.coarsen(grid_xt=coarsen_factor, grid_yt=coarsen_factor).mean() if plane == 'xy' else b
+        
+    # Make sure timestamps are the same among datasets by getting union of timestamps
+    timestamp_union = list(set(a.time.values) & set(b.time.values))
+    a, b = a.sel(time=list(timestamp_union)), b.sel(time=list(timestamp_union))
+    
+    # Extract correct dimensions by checking to make sure data dimensions
+    for dataset in [a, b]:
+        # x-y planar data
+        if ((plane == 'xy') or (plane is None)) and ('grid_xt' in dataset.dims) and ('grid_yt' in dataset.dims) and ('time' in dataset.dims):
+            time_axis, x_axis, y_axis = a.dims.index('time'), a.dims.index('grid_xt'), a.dims.index('grid_yt')
+        # y-z planar data 
+        elif (plane == 'yz') and ('grid_yt' in dataset.dims) and ('pfull' in dataset.dims) and ('time' in dataset.dims):
+            time_axis, x_axis, y_axis = a.dims.index('time'), a.dims.index('grid_yt'), a.dims.index('pfull')
+        # x-z planar data
+        elif (plane == 'xz') and ('grid_xt' in dataset.dims) and ('pfull' in dataset.dims) and ('time' in dataset.dims):
+            time_axis, x_axis, y_axis = a.dims.index('time'), a.dims.index('grid_xt'), a.dims.index('pfull')
+        else:
+            print('Incorrect dimensions provided. Please check data for correct dimensions.')
+            return None
             
     # Extract numeric values from the xArray Datasets
-    x, y = a, b
+    x, y = a.values, b.values
     # Initialize empty arrays to contain output data
     out_x, out_y = [np.full((N, x.shape[y_axis], x.shape[x_axis]), np.nan), 
                     np.full((N, y.shape[y_axis], y.shape[x_axis]), np.nan)]
 
     @numba.njit(parallel=True)
     def bootstrap_resample(in_x, in_y, out_x, out_y, N):
-        time_axis_length = min(in_x.shape[time_axis], in_y.shape[time_axis])
         for repetition in numba.prange(0, N):
             out_x_temp, out_y_temp = np.full(in_x.shape, np.nan, dtype=np.float32), np.full(in_y.shape, np.nan, dtype=np.float32)
-            for k in range(0, time_axis_length):
+            for k in range(0, in_x.shape[time_axis]):
                 out_x_temp[k] = in_x[np.random.randint(0, in_x.shape[time_axis]), :, :]
                 out_y_temp[k] = in_y[np.random.randint(0, in_y.shape[time_axis]), :, :]
             out_x[repetition, :, :] = nb_mean_axis_0(out_x_temp)
             out_y[repetition, :, :] = nb_mean_axis_0(out_y_temp)
         return out_x, out_y
-
+        
     out_x, out_y = bootstrap_resample(x, y, out_x, out_y, N)
     
     # Get difference between datasets
     delta = out_x - out_y # Control - SWISHE
     # Get values at each respective tail 
-    ci_min, ci_max = np.quantile(delta, (1 - level)/2, axis=0), np.quantile(delta, (1 + level)/2, axis=0)
+    ci_min, ci_max = np.quantile(delta, (1 - confidence_level)/2, axis=0), np.quantile(delta, (1 + confidence_level)/2, axis=0)
     # Wherever the signs are equal, output the mean. 
     # This indicates that the confidence interval does not intersect 0, such that the null hypothesis is rejected.
-    out_binary = np.where(np.sign(ci_min) == np.sign(ci_max), 1, np.nan).T
-    out_full = np.where(np.sign(ci_min) == np.sign(ci_max), np.nanmedian(delta, axis=0), np.nan).T
-    median = np.nanmedian(delta, axis=0).T
+    out_binary = np.where(np.sign(ci_min) == np.sign(ci_max), 1, np.nan)
+    out_full = np.where(np.sign(ci_min) == np.sign(ci_max), np.nanmedian(delta, axis=0), np.nan)
+    median = np.nanmedian(delta, axis=0)
+    
+    # Get axis names for defining new data objects
+    x_axis_name, y_axis_name = a.dims[x_axis], a.dims[y_axis]
+    # Convert median array into an xArray DataArray
+    median = xr.DataArray(data=median,
+                          dims=[y_axis_name, x_axis_name],
+                          coords={y_axis_name: ([y_axis_name], a[y_axis_name].values),
+                                  x_axis_name: ([x_axis_name], a[x_axis_name].values)})
+    
+    # Convert significance array into an xArray DataArray
+    significance_field = xr.DataArray(data=out_binary,
+                                     dims=[y_axis_name, x_axis_name],
+                                     coords={y_axis_name: ([y_axis_name], a[y_axis_name].values),
+                                             x_axis_name: ([x_axis_name], a[x_axis_name].values)})
 
-    return out_binary, out_full, median, delta, ci_min, ci_max
+    return median, significance_field, out_full, delta, ci_min, ci_max
     
 # End numba-specific parallelization methods.
 ############################################################

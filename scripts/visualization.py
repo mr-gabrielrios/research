@@ -194,6 +194,7 @@ def norm_cmap(data, field=None, num_bounds=16, extrema=None, white_adjust=False,
         
     # Subdivide normalization into sequential (all one sign) or diverging (two signs, including 0) bins
     if vmin < 0 and vmax > 0:
+        white_adjust = True
         # Get larger of the two bounds
         bins = np.linspace(-extremum, extremum, num_bounds + 1)
     else:        
@@ -281,6 +282,7 @@ def field_properties(field):
                   'net_lw': {'long_name': 'net longwave flux into atmosphere', 'units': 'W m$^{-2}$'},
                   'swup_toa': {'long_name': 'upward shortwave flux at TOA', 'units': 'W m$^{-2}$'},
                   'swdn_toa': {'long_name': 'downward shortwave flux at TOA', 'units': 'W m$^{-2}$'},
+                  'swabs_toa': {'long_name': 'net downward shortwave flux at TOA', 'units': 'W m$^{-2}$'},
                   'net_sw': {'long_name': 'net shortwave flux into atmosphere', 'units': 'W m$^{-2}$'},
                   'swup_sfc': {'long_name': 'upwards shortwave flux at surface', 'units': 'W m$^{-2}$'},
                   'swdn_sfc': {'long_name': 'downwards shortwave flux at surface', 'units': 'W m$^{-2}$'},
@@ -868,7 +870,7 @@ def TC_density_grid(model_names, experiment_names, year_range, year_adjustment=0
 
     if savefig:
         dirname = '/projects/GEOCLIM/gr7610/figs/swishe-small_scale'
-        filename = 'TC_density_grid-{0}.png'.format(storm_type)
+        filename = 'TC_density_grid-{0}.png'.format('_'.join(experiment_names))
         plt.savefig(os.path.join(dirname, filename), bbox_inches='tight', dpi=dpi)
 
 def pdf(data, models=['AM2.5', 'FLOR', 'HIRAM'], param='center_lat', num_bins=60, mode='pdf', dpi=144):
@@ -1137,7 +1139,30 @@ def swishe_frequency(models=['HIRAM', 'AM2.5', 'FLOR'], dpi=144, set_visible=Tru
         
     return data
 
-def basemap(fig, gs, model_name, experiment, year_range=None, row_num=0, col_num=0, extent=[0, 359, -60, 60], land=False,
+def basemap_annotation(model_name: str,
+                       experiment: str,
+                       year_range: tuple[int, int],
+                       ax,
+                       month_range: tuple[int, int]=(1, 12),
+                       title_y: float|None=None,
+                       label_fontsize: int=10):
+     # Subplot labeling
+    title_y = title_y if title_y else 1.05
+    # Define year and month range string plotting
+    year_range_str = ', {0} to {1}'.format(min(year_range), max(year_range)) if year_range else ''
+    month_range_str = ', {0} to {1}'.format(min(month_range), max(month_range)) if month_range else ''
+    # Set left-hand side to be {model name}, {min year} to {max year}
+    if subplot_title:
+        subplot_title_model = ax.annotate('{0}{1}{2}'.format(model_name, year_range_str, month_range_str),
+                                          (0, title_y), va='baseline', ha='left', xycoords='axes fraction', fontsize=label_fontsize)
+    # Set right-hand side to be {experiment name}
+    experiment_name = f'{experiment.split('-')[0]} - {experiment.split('-')[1]}' if '-' in experiment else experiment
+    subplot_title_experiment = ax.annotate('{0}'.format(experiment_name), (1, title_y), va='baseline', ha='right', 
+                                           xycoords='axes fraction', fontsize=label_fontsize)
+    
+    return ax
+
+def basemap(fig, gs, model_name, experiment, year_range=None, month_range=None, row_num=0, col_num=0, extent=[0, 359, -60, 60], land=False,
             xlabel=True, ylabel=True, subplot_title=True, label_fontsize=11, gridline_x_step=60, gridline_y_step=20,
             gridline_minor_step=10, title_y=None):
     """
@@ -1176,18 +1201,27 @@ def basemap(fig, gs, model_name, experiment, year_range=None, row_num=0, col_num
         ax.add_feature(cartopy.feature.LAND, color=(0.5, 0.5, 0.5, 0.25), zorder=99)
     ax.coastlines()
     
+    ax = basemap_annotation(model_name=model_name,
+                            experiment=experiment,
+                            year_range=year_range,
+                            ax=ax,
+                            month_range=month_range,
+                            title_y=title_y,
+                            label_fontsize=label_fontsize)
+    
     # Subplot labeling
-    title_y = title_y if title_y else 1.05
-    # Define year range string plotting
-    year_range_str = ', {0} to {1}'.format(min(year_range), max(year_range)) if year_range else ''
-    # Set left-hand side to be {model name}, {min year} to {max year}
-    if subplot_title:
-        subplot_title_model = ax.annotate('{0}{1}'.format(model_name, year_range_str),
-                                          (0, title_y), va='baseline', ha='left', xycoords='axes fraction', fontsize=label_fontsize)
-    # Set right-hand side to be {experiment name}
-    experiment_name = 'SWISHE' if experiment == 'CTL1990s_swishe' else 'CTL' if experiment == 'CTL1990s' else 'EXP-CTL' if '-' in experiment else experiment# override for publicatiom
-    subplot_title_experiment = ax.annotate('{0}'.format(experiment_name), (1, title_y), va='baseline', ha='right', 
-                                           xycoords='axes fraction', fontsize=label_fontsize)
+    # title_y = title_y if title_y else 1.05
+    # # Define year and month range string plotting
+    # year_range_str = ', {0} to {1}'.format(min(year_range), max(year_range)) if year_range else ''
+    # month_range_str = ', {0} to {1}'.format(min(month_range), max(month_range)) if month_range else ''
+    # # Set left-hand side to be {model name}, {min year} to {max year}
+    # if subplot_title:
+    #     subplot_title_model = ax.annotate('{0}{1}{2}'.format(model_name, year_range_str, month_range_str),
+    #                                       (0, title_y), va='baseline', ha='left', xycoords='axes fraction', fontsize=label_fontsize)
+    # # Set right-hand side to be {experiment name}
+    # experiment_name = f'{experiment.split('-')[0]} - {experiment.split('-')[1]}' if '-' in experiment else experiment
+    # subplot_title_experiment = ax.annotate('{0}'.format(experiment_name), (1, title_y), va='baseline', ha='right', 
+    #                                        xycoords='axes fraction', fontsize=label_fontsize)
 
     # Define major ticks
     gridline_x_major, gridline_y_major = [np.arange(extent[0] - longitude_offset, 
@@ -1326,6 +1360,7 @@ def TC_density_histogram(model_name: str,
                          experiment_names: str | list, 
                          year_range: tuple[int, int], 
                          ax,
+                         bin_size: int=5,
                          month_range: tuple[int, int] = (1, 13), 
                          basin_name: str | None = 'global', 
                          storm_type: str | None = 'TS',
@@ -1350,7 +1385,7 @@ def TC_density_histogram(model_name: str,
     colors = ['b', 'g', 'r', 'm', 'c']
 
     # Define bins over which track densities will be obtained
-    track_bins = np.arange(-60, 60, 5)
+    track_bins = np.arange(-60, 60, bin_size)
     
     # Initialize track dictionary. Each key will hold track data belonging to a distinct experiment.
     track_data = {}
@@ -1414,8 +1449,6 @@ def TC_density_histogram(model_name: str,
     
     if diagnostic:
         print(f'[visualization.plot_TC_density()] Checkpoint 3: plot TCs, {(time.time() - start_time):.3f} s elapsed')
-
-    return tracks
 
 def TC_activity(track_data: dict, 
                 model_name: str, 
@@ -1561,10 +1594,10 @@ def superimpose_TC_contour(model_name: str,
                                      bin_resolution=bin_resolution,
                                      month_range=month_range)
     # Determine the contour level
-    contour_level = np.array([2**n for n in range(0, 4)])[0]
+    contour_level = np.array([2**n for n in range(-1, 4)])[0]
     
+    diagnostic = True
     if diagnostic:
-        print(f'[visualization.superimpose_TC_contour] Arguments: {locals()}')
         print(f'[visualization.superimpose_TC_contour] Showing TC activity level at {contour_level} TCs per day per year.')
 
     # Assign a projection if default not provided
