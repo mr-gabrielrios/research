@@ -34,10 +34,11 @@ import numpy as np
 import os
 import pandas as pd
 import random
+import re
 import sys
 import time
 import xarray as xr
-from multiprocessing import Pool
+from multiprocess import Pool
 
 import derived
 import utilities
@@ -52,6 +53,39 @@ def get_filename_intensity(filename: str,
                            delimiter_string: str) -> int:
     filename_intensity = int(filename.split(f'{delimiter_string}-')[-1].split('.')[0])
     return filename_intensity
+
+def filter_existing_processed_data(field_name: str,
+                                   filenames: list[str],
+                                   anomaly_dirname: str='/tigress/GEOCLIM/gr7610/analysis/tc_storage/individual_TC_anomalies'):
+    
+    # Define helper functions for string parsing
+    get_filename_storm_ID = lambda f: f.split('storm_ID-')[1].split('.')[0]
+    get_filename_anomaly_field = lambda f: f.split('anomaly-')[1].split('.')[0]
+    
+    # Ensure that the TCs identified don't already have anomaly data generated for them
+    # 1. Create dictionary of existing storm IDs with anomaly data. Each value is a list for all anomaly fields belonging to the storm ID.
+    existing_anomaly_storm_IDs = {get_filename_storm_ID(filename): [] for filename in os.listdir(anomaly_dirname) if filename.endswith('.nc')}
+    # 2. Iterate over all anomaly files and append the iterand storm ID to the corresponding key in `existing_anomaly_storm_IDs`
+    for filename in os.listdir(anomaly_dirname):
+        if filename.endswith('.nc'):
+            # Get iterand filename storm ID
+            filename_storm_ID = get_filename_storm_ID(filename) 
+            if filename_storm_ID in existing_anomaly_storm_IDs.keys():
+                # Pull the anomaly field and append to the corresponding storm ID
+                filename_storm_ID_anomaly_field = get_filename_anomaly_field(filename)
+                existing_anomaly_storm_IDs[filename_storm_ID].append(filename_storm_ID_anomaly_field)
+
+    # Search through file names to remove TCs with existing anomaly data for the given field
+    # Conditions for filenames
+    # 1. Storm ID must not be in the existing filenames list for processed anomalies, OR 
+    # 2. If storm ID is in the existing filenames list for processed naomalies, the corresponding field names must not be in the iterand field names list
+    filenames = [f for f in filenames if
+                ((get_filename_storm_ID(f) not in existing_anomaly_storm_IDs.keys()) 
+                or 
+                (get_filename_storm_ID(f) in existing_anomaly_storm_IDs.keys() and 
+                field_name not in existing_anomaly_storm_IDs[get_filename_storm_ID(f)]))]
+    
+    return filenames
 
 def field_correction(model_name: str, 
                      dataset: xr.DataArray,
@@ -74,10 +108,11 @@ def derived_quantities(model_name: str,
     dataset['swup_sfc'] = dataset['swup_sfc'] * -1 if model_name in ['ERA5'] else dataset['swup_sfc']
 
     # Generate derived fields
-    dataset = derived.TC_surface_wind_speed(dataset)
+    if model_name not in ['MERRA', 'CERES']:
+        dataset = derived.TC_surface_wind_speed(dataset)
+        # dataset = derived.atmospheric_heating(dataset)
     dataset = derived.net_lw(dataset)
     dataset = derived.net_sw(dataset)
-    dataset = derived.atmospheric_heating(dataset)
 
     return dataset
 
@@ -244,6 +279,8 @@ def get_sample_GCM_data(model_name: str,
     # Subfilter by model name and experiment
     sample_GCM_data = sample_GCM_data[model_name][experiment_name]
     sample_GCM_path = sample_GCM_path[model_name][experiment_name][field_name]
+    # Redefince coordinate names if the dataset is observational
+    sample_GCM_data = sample_GCM_data.rename({'longitude': 'grid_xt', 'latitude': 'grid_yt'}) if model_name in ['CERES'] else sample_GCM_data
     # Get GCM grid spacing
     GCM_dx, GCM_dy = grid_check(sample_GCM_data)
     # Define spatial extent for sample clipping
@@ -279,6 +316,7 @@ def get_TC_anomaly_timestamp(model_name: str,
                              sampling_timestamp: cftime.datetime,
                              diagnostic: bool=False):
     
+    diagnostic=True
     
     # Get timestamp
     storm_sample = storm_reanalysis_data.sel(time=sampling_timestamp)
@@ -316,15 +354,19 @@ def get_TC_anomaly_timestamp(model_name: str,
     if np.max(abs(sample_GCM_data.grid_yt.values - storm_sample.grid_yt.values)) < 1e-6:
         sample_GCM_data = sample_GCM_data.assign_coords(grid_yt=storm_sample.grid_yt)
         
-    # Get simple anomaly and generate a new Dataset
+    # Perform data alignment and subtract GCM data from TC data to generate the anomaly
     a, b = xr.align(storm_sample[field_name], sample_GCM_data[field_name], join='left')
     TC_climatological_anomaly_timestamp = (a - b)
+    # Grab attributes
     storm_ID = storm_sample.attrs['storm_id']
+    GCM_pathname = sample_GCM_data.attrs['climatology_file']
+    # Generate the Dataset object
     TC_climatological_anomaly_dataset = xr.Dataset(data_vars={field_name: (['storm_id', 'grid_yt', 'grid_xt'], 
                                                                              np.expand_dims(TC_climatological_anomaly_timestamp.values, axis=0))},
-                                                     coords={'storm_id': ('storm_id', [storm_ID]),
-                                                             'grid_yt': ('grid_yt', TC_climatological_anomaly_timestamp.grid_yt.values),
-                                                             'grid_xt': ('grid_xt', TC_climatological_anomaly_timestamp.grid_xt.values)})
+                                                   coords={'storm_id': ('storm_id', [storm_ID]),
+                                                           'grid_yt': ('grid_yt', TC_climatological_anomaly_timestamp.grid_yt.values),
+                                                           'grid_xt': ('grid_xt', TC_climatological_anomaly_timestamp.grid_xt.values)},
+                                                   attrs={'climatology_file': sample_GCM_data.attrs['climatology_file']})
 
     # Check to ensure the difference in grid spacing in both directions is constant within some tolerance.
     assert np.max(abs(np.diff(TC_climatological_anomaly_timestamp.grid_xt.diff('grid_xt'))) < 1e-6), 'Irregular grid along x-axis.'
@@ -365,7 +407,7 @@ def get_TC_anomaly(model_name: str,
     sampling_timestamps = storm_reanalysis_data.time.values
     # If chosen, run in parallel using the partial function
     if parallel:
-        with Pool() as pool:
+        with Pool(processes=20) as pool:
             TC_anomaly_timestamps = pool.map(partial_TC_anomaly_timestamp, sampling_timestamps)
             pool.close()
     # Else, run serial. Serial is usually better for troubleshooting and debugging.
@@ -420,7 +462,7 @@ def save_TC_anomaly(pathname: str,
     anomaly_pathname = os.path.join(dirname, anomaly_filename)
     # If pathname exists, do not overwrite. Else, save
     if os.path.exists(anomaly_pathname):
-        print(f'Dataset already exists at {pathname}, continue...')
+        print(f'Dataset already exists at {anomaly_pathname}, continue...')
     else:
         # Save Dataset to file
         print(f'Saving anomaly dataset for {field_name} with spatial window size {space_window_size} deg and temporal window size {time_window_size} days to file {anomaly_pathname}...')
@@ -429,7 +471,7 @@ def save_TC_anomaly(pathname: str,
 def main(model_name: str,
          experiment_name: str,
          year_range: tuple[int, int],
-         field_names: str|list[str],
+         field_name: str,
          basin_name: str='global',
          intensity_parameter: str='min_slp',
          intensity_range: tuple[int|float, int|float]=(0, np.inf),
@@ -446,6 +488,11 @@ def main(model_name: str,
                  experiment_name in filename and
                  min(year_range) <= get_filename_year(filename) < max(year_range) and
                  min(intensity_range) <= get_filename_intensity(filename, intensity_parameter) < max(intensity_range)]
+    # Filter out files that have already been processed
+    filenames = filter_existing_processed_data(field_name=field_name,
+                                               filenames=filenames)
+    assert len(filenames) > 0, f'No files found matching the criteria provided.'
+    
     # Generate list of pathnames
     pathnames = [os.path.join(dirname, filename) for filename in filenames]
     # If a number of storms provided, sample at random
@@ -457,33 +504,26 @@ def main(model_name: str,
     assert len(pathnames) > 0, f'No files found matching the criteria provided.'
     
     # Ensure that field names is a list
-    if isinstance(field_names, str):
-        field_names = [field_names]
-    elif isinstance(field_names, list) | isinstance(field_names, tuple):
-        field_names = field_names
-    else:
-        print(f'Field names must be provided in an iterable or string format. Current type is {type(field_names)}. Please correct.')
-        sys.exit()
+    assert isinstance(field_name, str), f'Field names must be provided in string format. Current type is {type(field_name)}. Please correct.'
 
     # Process each path
     for pathname in pathnames:
-        for field_name in field_names:
-            print(f'Pulling data from filename {pathname} for field name {field_name}.')
-            # Get anomaly for an individual TC
-            TC_anomaly_dataset = get_TC_anomaly(model_name, 
-                                                experiment_name,
-                                                field_name,
-                                                year_range,
-                                                time_window_size,
-                                                space_window_size,
-                                                pathname,
-                                                parallel=parallel)
-            
-            # Perform a grid check
-            check_grid(TC_anomaly_dataset)
-            
-            # Save the data to a custom location
-            save_TC_anomaly(pathname=pathname,
+        print(f'Pulling data from filename {pathname} for field name {field_name}.')
+        # Get anomaly for an individual TC
+        TC_anomaly_dataset = get_TC_anomaly(model_name, 
+                                            experiment_name,
+                                            field_name,
+                                            year_range,
+                                            time_window_size,
+                                            space_window_size,
+                                            pathname,
+                                            parallel=parallel)
+        
+        # Perform a grid check
+        check_grid(TC_anomaly_dataset)
+        
+        # Save the data to a custom location
+        save_TC_anomaly(pathname=pathname,
                             anomaly_dataset=TC_anomaly_dataset,
                             field_name=field_name,
                             time_window_size=time_window_size,
@@ -499,7 +539,7 @@ if __name__ == '__main__':
     parser.add_argument('--model_name', type=str, help="Name of the model to extract data from.", required=True)
     parser.add_argument('--experiment_name', type=str, help="Name of the experiment to extract GCM data from.", required=True)
     parser.add_argument('--year_range', type=str, help="Range of years to search for TCs over. Provide input in `YYYY:YYYY` format.", required=True)
-    parser.add_argument('--field_names', type=str, help="Name of the GCM output field to extract anomaly data for. Provide input in `FIELD:FIELD:FIELD` format.", required=True)
+    parser.add_argument('--field_name', type=str, help="Name of the GCM output field to extract anomaly data for.", required=True)
     # Optional inputs
     parser.add_argument('--basin_name', nargs='?', default='global', type=str, help="Name of the TC basin to search for.")
     parser.add_argument('--intensity_parameter', nargs='?', default='min_slp', type=str, help="Intensity parameter for TC filtering. Either `min_slp` or `max_wind`.")
@@ -512,8 +552,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     # Process format-dependent arguments
-    if ':' in args.field_names:
-        args.field_names = tuple([field_name for field_name in args.field_names.split(':')])
     args.year_range = tuple([int(year) for year in args.year_range.split(':')])
     args.intensity_range = tuple([int(bound) for bound in args.intensity_range.split(':')])
     # Print arguments for diagnostic
@@ -524,7 +562,7 @@ if __name__ == '__main__':
     main(model_name=args.model_name,
          experiment_name=args.experiment_name,
          year_range=args.year_range,
-         field_names=args.field_names,
+         field_name=args.field_name,
          basin_name=args.basin_name,
          intensity_parameter=args.intensity_parameter,
          intensity_range=args.intensity_range,
