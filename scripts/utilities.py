@@ -55,7 +55,7 @@ def directories(model, experiment, data_type='model_output'):
     dirnames = {'AM2.5': {'CTL1990s': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                        'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s/POSTP'},
                           'CTL1990s_swishe': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
-                                              'model_output': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/POSTP'},
+                                              'model_output': '/projects/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s_swishe/POSTP'},
                           'CTL1990s_ewishe': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_ewishe_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                               'model_output': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_ewishe_tigercpu_intelmpi_18_540PE/POSTP'},
                           'CTL1990s_ewishe_5x': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_ewishe_5x_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
@@ -64,6 +64,8 @@ def directories(model, experiment, data_type='model_output'):
                                               'model_output': '/projects2/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s_plus2K/POSTP'},
                           'CTL1990s_tiger3': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM2.5/work/CTL1990s_tiger3_tiger3_intelmpi_24_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                               'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM2.5/work/CTL1990s_tiger3_tiger3_intelmpi_24_540PE/POSTP'},
+                          'CTL1990s_dSST_tiger3': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM2.5/work/CTL1990s_dSST_tiger3_tiger3_intelmpi_24_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                              'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM2.5/work/CTL1990s_dSST_tiger3_tiger3_intelmpi_24_540PE/POSTP'},
                           'CTL1990s_swishe_tiger3': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM2.5/work/CTL1990s_swishe_tiger3_tiger3_intelmpi_24_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                               'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM2.5/work/CTL1990s_swishe_tiger3_tiger3_intelmpi_24_540PE/POSTP'},
                           'CTL1990s_ewishe2X_tiger3': {'track_data': '/projects/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s_ewishe2X_tiger3/analysis_lmh/cyclones_gav_ro110_1C_330k',
@@ -73,7 +75,10 @@ def directories(model, experiment, data_type='model_output'):
                           'CTL1990s_ewishe8X_tiger3': {'track_data': '/projects/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s_ewishe8X_tiger3/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                               'model_output': '/projects/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s_ewishe8X_tiger3/POSTP'},
                           'CTL1990s_swishe_plus2K': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_plus2K_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
-                                                     'model_output': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_plus2K_tigercpu_intelmpi_18_540PE/POSTP'}},
+                                                     'model_output': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_plus2K_tigercpu_intelmpi_18_540PE/POSTP'},
+                          'CTL1990s_swishe_allflux_tiger3': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM2.5/work/CTL1990s_swishe_allflux_tiger3_tiger3_intelmpi_24_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                                     'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM2.5/work/CTL1990s_swishe_allflux_tiger3_tiger3_intelmpi_24_540PE/POSTP'},
+                },
                 'AM2.5_HH': {'CTL1990s': {'track_data': '/projects/GEOCLIM/hhe/Analyses/TC-detection/AM2.5/CTL1990s_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k'},
                              'CTL1990s_minus2K': {'track_data': '/projects/GEOCLIM/hhe/Analyses/TC-detection/AM2.5/CTL1990s_minus2K_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k'},
                              'CTL1990s_minus4K': {'track_data': '/projects/GEOCLIM/hhe/Analyses/TC-detection/AM2.5/CTL1990s_minus4K_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k'},
@@ -91,8 +96,8 @@ def directories(model, experiment, data_type='model_output'):
                                       'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s/POSTP'},
                          'CTL1990s_FA': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_FA/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                       'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_FA/POSTP'},
-                         'CTL1990s_FA_tiger3': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/FLOR/exp/CTL1990s_FA_tiger3/work/analysis_lmh/cyclones_gav_ro110_1C_330k',
-                                      'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/FLOR/exp/CTL1990s_FA_tiger3/work/POSTP'},
+                         'CTL1990_FA_tiger3': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/FLOR/exp/CTL1990_FA_tiger3/work/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                      'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/FLOR/exp/CTL1990_FA_tiger3/work/POSTP'},
                          'CTL1990s-8xdaily': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s-8xdaily_tigercpu_intelmpi_18_576PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                       'model_output': '/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s-8xdaily_tigercpu_intelmpi_18_576PE/POSTP'},
                          'CTL1990s_swishe': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_swishe/analysis_lmh/cyclones_gav_ro110_1C_330k',
@@ -105,8 +110,8 @@ def directories(model, experiment, data_type='model_output'):
                                       'model_output': '/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_swishe-8xdaily_tigercpu_intelmpi_18_576PE/POSTP'},
                          'CTL1990s_swishe_FA': {'track_data': '/projects/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_swishe_FA/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                      'model_output': '/projects/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_swishe_FA/POSTP'},
-                         'CTL1990s_swishe_FA_tiger3': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/FLOR/exp/CTL1990s_swishe_FA_tiger3/work/analysis_lmh/cyclones_gav_ro110_1C_330k',
-                                      'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/FLOR/exp/CTL1990s_swishe_FA_tiger3/work/POSTP'},
+                         'CTL1990_swishe_FA_tiger3': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/FLOR/exp/CTL1990_swishe_FA_tiger3/work/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                      'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/FLOR/exp/CTL1990_swishe_FA_tiger3/work/POSTP'},
                          'CTL1990s_ewishe_5x': {'track_data': '/projects/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_ewishe_5x/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                      'model_output': '/projects/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_ewishe_5x/POSTP'},
                          'CTL1990s_2xCO2': {'track_data': '/projects/w/wenchang/MODEL_OUT/FLOR/CTL1990_v201905_2xCO2_tigercpu_intelmpi_18_576PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
@@ -208,7 +213,6 @@ def postprocess_access(models: list,
                     Dictionary structure is: paths{model: {year_range, path}}
     '''
 
-    diagnostic = False
     # Directory holding post-processed climate model data
     dirname = search_directory if search_directory else '/tigress/GEOCLIM/gr7610/analysis/model_out'
     # Initialize data structure to hold pathnames and model year ranges for each model and experiment configuration
@@ -224,15 +228,19 @@ def postprocess_access(models: list,
             for field, field_information in fields.items():
                 # Fetch metadata for field
                 domain, level = field_information['domain'], field_information['level']
+                # Define the unit for the vertical dimension pertaining to the iterand domain
+                vertical_dimension_unit = '' if domain == 'ocean' else 'hPa'
                 # Redefine vertical level string
-                level = '-full-' if not level else level
+                level = '-full-' if not level or ('full' in level) else f'{level}{vertical_dimension_unit}'
+                if diagnostic:
+                    print(f'[postprocess_access] Domain {domain}, level {level}, with units of {vertical_dimension_unit}. Processing for data type {data_type}.')
                 # Filter files by model, experiment, field, and vertical level
                 filenames = [f for f in os.listdir(dirname) if
                              model in f and 
                              '{0}-'.format(experiment) in f and 
                              f'{field}-' in f and
                              domain in f and
-                             (f'{level}hPa' in f or f'{level}m' in f) and
+                             level in f and
                              data_type in f and
                              f.endswith('nc')]
                 if diagnostic:
@@ -258,7 +266,8 @@ def postprocessed_data_load(models: str | list[str],
                            load_full_time: bool=False,
                            load_data: bool=False,
                            return_paths: bool=False,
-                           search_directory: str|None=None) -> dict | tuple[dict, dict]:
+                           search_directory: str|None=None,
+                           diagnostic: bool=False) -> dict | tuple[dict, dict]:
 
     '''
     Loads data for a given list of models, experiments, and fields.
@@ -296,7 +305,11 @@ def postprocessed_data_load(models: str | list[str],
     # Initialize container dictionary
     data = {model: {} for model in models}
     # Obtain path names and model years for the requested models, experiments, and fields
-    paths = postprocess_access(models, experiments, fields, year_range, data_type=data_type, search_directory=search_directory)
+    paths = postprocess_access(models, experiments, fields, year_range, data_type=data_type, search_directory=search_directory, diagnostic=diagnostic)
+    
+    if diagnostic:
+        print(f'[postprocessed_data_load] Accessed paths: {paths}')
+    
     # Iterate over each model to load data
     for model in models:
         start_year, end_year = ['{0:04d}-01-01'.format(min(paths[model]['year_range'])), 
@@ -852,7 +865,7 @@ def land_mask(data, mask_type='land'):
     
     mask = xr.open_dataset('/projects2/GEOCLIM/gr7610/tools/land_mask.nc')['land_mask']
     mask_value = 1 if mask_type == 'ocean' else 0
-    data = np.where(mask == mask_value, data, np.nan)
+    data = data.where(mask == mask_value, np.nan)
 
     return data
 
