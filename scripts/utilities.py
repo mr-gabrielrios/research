@@ -316,10 +316,20 @@ def postprocessed_data_load(models: str | list[str],
                                 '{0:04d}-01-01'.format(max(paths[model]['year_range'])+1)]
         for experiment in experiments:
             data[model][experiment] = {}
-            # Load data for the given configuration, and slice by time to minimize data loading into memorry
+            # Initialize variables for x- and y-axis values from atmospheric data, to be used for interpolating ocean data, if it exists
+            grid_xt_values, grid_yt_values = None, None
+            # Load data for the given configuration, and slice by time to minimize data loading into memory
             for field in fields.keys():
                 data[model][experiment][field] = xr.open_dataset(paths[model][experiment][field])[field] if load_full_time else xr.open_dataset(paths[model][experiment][field])[field].sel(time=slice(start_year, end_year))
-                data[model][experiment][field] = ocean_grid_alignment(data[model][experiment][field])
+                # Load data for x- and y-axis values
+                grid_xt_values = data[model][experiment][field].grid_xt.values if fields[field]['domain'] == 'atmos' else grid_xt_values
+                grid_yt_values = data[model][experiment][field].grid_yt.values if fields[field]['domain'] == 'atmos' else grid_yt_values
+            # Perform ocean grid alignment if the field is an ocean variable
+            for field in fields.keys():
+                if fields[field]['domain'] == 'ocean':
+                    data[model][experiment][field] = ocean_grid_alignment(data[model][experiment][field],
+                                                                          x_axis_values=grid_xt_values,
+                                                                          y_axis_values=grid_yt_values)
             # Merge dictionary values for each model and experiment pair into an xArray Dataset for a concise data structure
             data[model][experiment] = xr.merge(data[model][experiment].values())
             # Filter by month
@@ -327,7 +337,7 @@ def postprocessed_data_load(models: str | list[str],
             data[model][experiment] = data[model][experiment].sel(time=month_range_filter)
             # Correct field data for units
             data[model][experiment] = field_correction(model, data[model][experiment])
-
+            
     # Generate the difference experiment dataset based on inputs, iterating over each model
     if difference_experiment:
         for model in models:
@@ -1033,7 +1043,9 @@ def in_basin(basin_masks: dict,
     # If the distance is smaller than the minimum grid spacing, it is considered in the basin. Else, it's not.
     return condition
 
-def ocean_grid_alignment(dataset):
+def ocean_grid_alignment(dataset: xr.DataArray | xr.Dataset,
+                         x_axis_values: list[float] | None=None,
+                         y_axis_values: list[float] | None=None):
     '''
     Aligns the FLOR ocean model coordinate system with the atmosphere model coordinate system.
 
@@ -1059,6 +1071,11 @@ def ocean_grid_alignment(dataset):
             if dim in ocean_coord_names.keys():
                 dataset = dataset.rename({dim: ocean_coord_names[dim]})
 
+    if x_axis_values is not None:
+        dataset = dataset.interp(grid_xt=x_axis_values, method='nearest').dropna(dim='grid_xt', how='all')
+    if x_axis_values is not None:
+        dataset = dataset.interp(grid_yt=y_axis_values, method='nearest').dropna(dim='grid_yt', how='all')
+            
     return dataset
 
 def circular_mask(X: np.array,
