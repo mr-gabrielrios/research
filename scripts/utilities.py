@@ -52,6 +52,7 @@ def directories(model, experiment, data_type='model_output'):
     Method to log the directories of all raw model runs and return a corresponding path.
     """
     
+    
     dirnames = {'AM2.5': {'CTL1990s': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                        'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/AM2.5/CTL1990s/POSTP'},
                           'CTL1990s_swishe': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
@@ -78,6 +79,34 @@ def directories(model, experiment, data_type='model_output'):
                                                      'model_output': '/scratch/gpfs/GEOCLIM/gr7610/AM2.5/work/CTL1990s_swishe_plus2K_tigercpu_intelmpi_18_540PE/POSTP'},
                           'CTL1990s_swishe_allflux_tiger3': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM2.5/work/CTL1990s_swishe_allflux_tiger3_tiger3_intelmpi_24_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                                      'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM2.5/work/CTL1990s_swishe_allflux_tiger3_tiger3_intelmpi_24_540PE/POSTP'},
+                },
+                'AM4': {'CTL1990': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_tiger3_intelmpi_24_216PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                    'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_tiger3_intelmpi_24_216PE/POSTP'},
+                        'CTL1990_C192': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_C192_tiger3_intelmpi_24_1152PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                         'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_C192_tiger3_intelmpi_24_1152PE/POSTP'},
+                        'CTL1990_swishe_C192': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_swishe_C192_tiger3_intelmpi_24_1152PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                                'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_swishe_C192_tiger3_intelmpi_24_1152PE/POSTP'},
+                        'CTL1990_C192_AQP15': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_C192_AQP15_tiger3_intelmpi_24_1152PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                                'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_C192_AQP15_tiger3_intelmpi_24_1152PE/POSTP'},
+                        'CTL1990_swishe_C192_AQP15': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_swishe_C192_AQP15_tiger3_intelmpi_24_1152PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                                'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_swishe_C192_AQP15_tiger3_intelmpi_24_1152PE/POSTP'},
+                        'CTL1990_C192_CONST': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_C192_CONST_tiger3_intelmpi_24_1152PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                                'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_C192_CONST_tiger3_intelmpi_24_1152PE/POSTP'},
+                        'CTL1990_swishe_C192_CONST': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_swishe_C192_CONST_tiger3_intelmpi_24_1152PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                                'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_swishe_C192_CONST_tiger3_intelmpi_24_1152PE/POSTP'},
+                        'CTL1990_C192.SLAB_20': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_C192.SLAB_20_tiger3_intelmpi_24_540PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                                 'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_C192.SLAB_20_tiger3_intelmpi_24_540PE/POSTP'},
+                        'CTL1990_C192.SLAB_30': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_C192.SLAB_30_tiger3_intelmpi_24_540PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                                 'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_C192.SLAB_30_tiger3_intelmpi_24_540PE/POSTP'},
+                        'CTL1990_C192.SLAB_40': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_C192.SLAB_40_tiger3_intelmpi_24_1152PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                                 'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_C192.SLAB_40_tiger3_intelmpi_24_1152PE/POSTP'},
+                        'CTL1990_swishe_C192.SLAB_40': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_swishe_C192.SLAB_40_tiger3_intelmpi_24_1152PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                                 'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_swishe_C192.SLAB_40_tiger3_intelmpi_24_1152PE/POSTP'},
+                        'CTL1990_C192.SLAB_50': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_C192.SLAB_50_tiger3_intelmpi_24_1152PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                                 'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_C192.SLAB_50_tiger3_intelmpi_24_1152PE/POSTP'},
+                        'CTL1990_C192.SLAB_100': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_C192.SLAB_100_tiger3_intelmpi_24_540PE/analysis_lmh/cyclones_gav_ro110_2p5C_330k',
+                                                 'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/AM4/test/AM4/work/CTL1990_C192.SLAB_100_tiger3_intelmpi_24_540PE/POSTP'}
+                
                 },
                 'AM2.5_HH': {'CTL1990s': {'track_data': '/projects/GEOCLIM/hhe/Analyses/TC-detection/AM2.5/CTL1990s_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k'},
                              'CTL1990s_minus2K': {'track_data': '/projects/GEOCLIM/hhe/Analyses/TC-detection/AM2.5/CTL1990s_minus2K_tigercpu_intelmpi_18_540PE/analysis_lmh/cyclones_gav_ro110_1C_330k'},
@@ -106,6 +135,10 @@ def directories(model, experiment, data_type='model_output'):
                                                    'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_swishe-ens01/POSTP'},
                          'CTL1990s_swishe-ens02': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_swishe-ens02/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                                    'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_swishe-ens02/POSTP'},
+                         'CTL1990s_swishe-ens03': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_swishe-ens03/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                                   'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_swishe-ens03/POSTP'},
+                         'CTL1990s_swishe-ens04': {'track_data': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_swishe-ens04/analysis_lmh/cyclones_gav_ro110_1C_330k',
+                                                   'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_swishe-ens04/POSTP'},
                          'CTL1990s_swishe-8xdaily': {'track_data': '/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_swishe-8xdaily_tigercpu_intelmpi_18_576PE/analysis_lmh/cyclones_gav_ro110_1C_330k',
                                       'model_output': '/scratch/gpfs/GEOCLIM/gr7610/FLOR/work/CTL1990s_swishe-8xdaily_tigercpu_intelmpi_18_576PE/POSTP'},
                          'CTL1990s_swishe_FA': {'track_data': '/projects/GEOCLIM/gr7610/MODEL_OUT/FLOR/CTL1990s_swishe_FA/analysis_lmh/cyclones_gav_ro110_1C_330k',
@@ -128,7 +161,13 @@ def directories(model, experiment, data_type='model_output'):
                                              'model_output': '/tigress/GEOCLIM/gr7610/MODEL_OUT/HIRAM/CTL1990s_swishe-8xdaily_tigercpu_intelmpi_18_540PE/POSTP'}},
                 'ERA5': {'reanalysis': {'model_output': '/scratch/gpfs/GEOCLIM/gr7610/tiger3/reference/datasets/ERA5/POSTP'}}}
     
-    return dirnames[model][experiment][data_type]
+    try:
+        output_path = dirnames[model][experiment][data_type]
+    except:
+        print(f'Path for model {model} and experiment {experiment} not found. Returning None.')
+        output_path = None
+    
+    return output_path
 
 def month_letter(month):
     month_letters = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D']
@@ -398,8 +437,9 @@ def get_constants(name):
                  'L_v': 2.5e6, 
                  'R_d': 287.04,
                  'R_v': 461.5,
-                 'eps': 0.622,
-                 'g': 9.81}
+                 'eps': 0.622, 
+                 'g': 9.81, # Earth's gravitational acceleration [in m s^-2]
+                 'a': 6.371e6} # Earth's radius [in m]
     
     return constants[name]
 
@@ -810,11 +850,13 @@ def retrieve_tracked_TCs_OLD(model, experiment, storm_type, year_range, intensit
         
         return data
 
-def retrieve_tracked_TCs(model, experiment, storm_type, year_range, diagnostic=False):
+def retrieve_tracked_TCs(model, experiment, storm_type, year_range, diagnostic=False, parallel=False):
     
     data = track_TCs.main(model_name=model, 
                           experiment_name=experiment, 
-                          year_range=year_range)
+                          year_range=year_range,
+                          run_parallel=parallel,
+                          diagnostic=diagnostic)
     
     return data
 
@@ -1097,6 +1139,32 @@ def circular_mask(X: np.array,
             (((X - x) ** 2 + (Y - y) ** 2) <= outer_radius ** 2))
     
     return mask
+
+def meridional_overturning(data: xr.Dataset) -> xr.Dataset:
+    
+    ''' Approximates the streamfunction for the meridional overturning circulation, given an xArray Dataset. '''
+    
+    # Check for proper dimensions
+    assert 'pfull' in data.dims
+    assert 'grid_xt' in data.dims 
+    assert 'vcomp' in data.data_vars 
+    
+    # Define constants
+    a = get_constants('a') # Earth's radius [m]
+    g = get_constants('g') # gravitational acceleration [m s^{-2}]
+    dp = data['pfull'].diff('pfull') * 100 # pressure differential between vertical levels (Pa)
+    const = (2 * np.pi * a * np.cos(np.deg2rad(data.grid_yt)) / g) # constant in front of integrand
+    integrand = (data['vcomp'].cumsum(dim='pfull') * dp).sum('grid_xt')
+    psi_m = (const * integrand)
+    
+    # Construct and assign the DataArray
+    data['psi_m'] = xr.DataArray(data=psi_m,
+                                 dims=['grid_yt', 'time', 'pfull'],
+                                 coords={'pfull': (['pfull'], psi_m.pfull.data),
+                                         'grid_yt': (['grid_yt'], psi_m.grid_yt.data),
+                                         'time': (['time'], psi_m.time.data)})
+    
+    return data
 
 ############################################################
 # Begin numba-specific parallelization methods.
