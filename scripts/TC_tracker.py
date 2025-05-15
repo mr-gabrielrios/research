@@ -44,6 +44,24 @@ def access_storm_tracks(model_name: str,
 
     return track_data
 
+def interpolate_storm_tracks(track_data: pd.DataFrame,
+                             frequency: str='6H'):
+    
+    ''' Interpolate TC tracks to a given temporal frequency. '''
+    
+    # Initialize container to hold all interpolate DataFrames
+    container = [] 
+    # Iterate over all TCs in the input track data dataset
+    for TC_ID, TC in track_data.groupby('storm_id'):
+        # Convert the index to a DatetimeIndex type, resample to the given frequency, interpolate numeric values, and forward fill strings
+        temp = TC.set_index('time').resample(frequency).interpolate(method='linear', limit_direction='forward', axis=0).ffill()
+        # Append the iterand interpolated data to the container
+        container.append(temp.reset_index())
+
+    interpolated_track_data = pd.concat(container).sort_values('time')
+    
+    return interpolated_track_data
+
 def test_single_storm(storm_track_data: pd.DataFrame):
 
     ''' Provide tests to ensure tracked storm is legitimate. '''
@@ -121,14 +139,29 @@ def latitude_filter(track_data: pd.DataFrame,
     return threshold_track_data
 
 def pick_storm_IDs(track_data: pd.DataFrame,
-                   number_of_storms: int) -> list:
+                   number_of_storms: int,
+                   TC_storage_dirname: str|None = None) -> list:
 
     ''' Method to obtain `number_of_storms` random storm IDs from a provided track dataset. '''
-
+    
+    # Define the directory where TCs are stored
+    TC_storage_dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs' if not TC_storage_dirname else TC_storage_dirname
+    # Load filenames for future searchinf
+    TC_filenames = [filename for filename in os.listdir(TC_storage_dirname) if filename.endswith('.nc')]
+    
     # Get list of unique storm IDs
-    unique_storm_IDs = track_data['storm_id'].unique()
+    unique_storm_IDs = list(track_data['storm_id'].unique())
     # Make sure the number of requested storms is less than the number of unique IDs; 
     number_of_storms = len(unique_storm_IDs) if (number_of_storms > len(unique_storm_IDs)) or (number_of_storms < 0) else number_of_storms
+    
+    # Remove storm IDs that already have a corresponding TC saved
+    # Search the storage directory to see if a TC with the iterand storm ID has already been saved
+    existing_storm_IDs = [existing_storm_ID for existing_storm_ID in TC_filenames if
+                          existing_storm_ID in TC_filenames]
+    # Remove the storm IDs that already exist from the list of unique storm IDs
+    [unique_storm_IDs.remove(existing_storm_ID) for existing_storm_ID in existing_storm_IDs if
+     existing_storm_ID in unique_storm_IDs]
+    
     # If not, make the number of storms equal to `unique_storm_IDs`
     # Get indices for `number_of_storms` random storm IDs
     storm_ID_indices = np.random.choice(range(len(unique_storm_IDs)), size=number_of_storms, replace=False)
@@ -148,7 +181,7 @@ def pick_storm(track_data: pd.DataFrame,
         storm_ID = track_data['storm_id'].unique()[storm_index]
     elif selection_method == 'storm_number' and storm_ID:
         assert isinstance(storm_ID, str), 'Storm ID must be a string.'
-        assert storm_ID in track_data['storm_id'].values, 'Storm ID not found in track dataset.'
+        assert storm_ID in track_data['storm_id'].values, f'Storm ID {storm_ID} not found in track dataset.'
     else:
         print('Please provide a storm ID or set `selection_method` to `random`. Exiting.')
         sys.exit()
@@ -196,7 +229,7 @@ def storm_GCM_calendar_alignment(storm_timestamps: list[cftime.datetime],
 def get_storm_GCM_data(model_name: str,
                        experiment_name: str,
                        storm_track_timestamps,
-                       gcm_data_type: str='atmos_4xdaily') -> list:
+                       GCM_data_type: str='atmos_4xdaily') -> list:
     
     ''' For each candidate storm timestamp, find corresponding `GCM output` file. '''
 
@@ -207,7 +240,7 @@ def get_storm_GCM_data(model_name: str,
     # Obtain filenames in the configuration-specific directory for the chosen data type
     gcm_pathnames = [os.path.join(gcm_dirname, gcm_filename) for gcm_filename in os.listdir(gcm_dirname)
                      if gcm_filename.endswith('.nc') and 
-                     gcm_data_type in gcm_filename] 
+                     GCM_data_type in gcm_filename] 
     # Ensure files are found in the directory. If not, exit.
     if len(gcm_pathnames) > 0:
         # Filter pathname list for paths containing years relevant to storm
@@ -371,12 +404,15 @@ def get_storm_basin_name(storm: xr.Dataset) -> str:
 def save_storm_netcdf(storm_gcm_data: xr.Dataset,
                       model_name: str,
                       experiment_name: str,
+                      storage_dirname: str|None=None,
                       overwrite: bool=False):
     
     ''' Save xArray Dataset to netCDF file. '''
 
+    # Define reanalysis dataset names for custom handling
+    reanalysis_dataset_names = ['ERA5']
     # Define storage directory
-    storage_dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs'
+    storage_dirname = '/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs' if storage_dirname is None else storage_dirname
     
     # Obtain parameters for filename construction
     storm_ID = storm_gcm_data.attrs['storm_id']
@@ -406,9 +442,9 @@ def save_storm_netcdf(storm_gcm_data: xr.Dataset,
         # Save the data
         storm_gcm_data.to_netcdf(storm_pathname)
     
-def storm_generator(model_name: str,
-                    experiment_name: str,
-                    track_data: pd.DataFrame,
+def storm_generator(track_data: pd.DataFrame,
+                    storage_dirname: str|None,
+                    GCM_data_type: str,
                     storm_ID: str):
 
     ''' Method to perform all steps related to binding corresponding GFDL QuickTracks and GCM model output together for a given TC. '''
@@ -417,22 +453,23 @@ def storm_generator(model_name: str,
     
     # 3. Find a candidate storm from the track data
     storm_track_data = pick_storm(track_data, selection_method='storm_number', storm_ID=storm_ID)
-    # 4. Get candidate storm timestamps
-    storm_track_timestamps = storm_track_data['cftime']
-    # 5. For each candidate storm timestamp, find corresponding `GCM output` file
-    storm_gcm_pathnames, storm_track_timestamps = get_storm_GCM_data(model_name, experiment_name, storm_track_timestamps)
-    # 5a. Correct GFDL QuickTracks cftime timestamp format to match GCM output format
-    storm_track_data['cftime'] = storm_track_timestamps
-    # 6. Get candidate storm coordinates
-    storm_track_coordinates = get_storm_coordinates(storm_track_data, storm_track_timestamps)
-    # 7. For each candidate storm timestamp, load GCM data and use storm timestamps to trim time of `GCM output` file
-    storm_gcm_data, storm_gcm_timestamps = load_GCM_data(storm_gcm_pathnames, storm_track_timestamps, storm_track_coordinates)
-    # 8. For each candidate storm timestamp, use storm coordinates to trim spatial extent of `GCM output` file
-    storm_gcm_data = trim_GCM_data(storm_gcm_data, storm_gcm_timestamps, storm_track_coordinates)
-    # 9. Append information from `track data` to netCDF object containing GCM output
-    storm_gcm_data = join_track_GCM_data(storm_track_data, storm_gcm_data)
-    # 10. Save xArray Dataset to netCDF file
-    save_storm_netcdf(storm_gcm_data, model_name, experiment_name)
+    if storm_track_data is not None:
+        # 4. Get candidate storm timestamps
+        storm_track_timestamps = storm_track_data['cftime']
+        # 5. For each candidate storm timestamp, find corresponding `GCM output` file
+        storm_gcm_pathnames, storm_track_timestamps = get_storm_GCM_data(model_name, experiment_name, storm_track_timestamps, GCM_data_type=GCM_data_type)
+        # 5a. Correct GFDL QuickTracks cftime timestamp format to match GCM output format
+        storm_track_data['cftime'] = storm_track_timestamps
+        # 6. Get candidate storm coordinates
+        storm_track_coordinates = get_storm_coordinates(storm_track_data, storm_track_timestamps)
+        # 7. For each candidate storm timestamp, load GCM data and use storm timestamps to trim time of `GCM output` file
+        storm_gcm_data, storm_gcm_timestamps = load_GCM_data(storm_gcm_pathnames, storm_track_timestamps, storm_track_coordinates)
+        # 8. For each candidate storm timestamp, use storm coordinates to trim spatial extent of `GCM output` file
+        storm_gcm_data = trim_GCM_data(storm_gcm_data, storm_gcm_timestamps, storm_track_coordinates)
+        # 9. Append information from `track data` to netCDF object containing GCM output
+        storm_gcm_data = join_track_GCM_data(storm_track_data, storm_gcm_data)
+        # 10. Save xArray Dataset to netCDF file
+        save_storm_netcdf(storm_gcm_data, storage_dirname=storage_dirname)
     
 def main(model_name: str, 
          experiment_name: str, 
@@ -440,7 +477,9 @@ def main(model_name: str,
          intensity_parameter: str,
          intensity_range: tuple[int|float, int|float]=(0, np.inf),
          latitude_range: tuple[int|float, int|float]=(-40, 40),
-         number_of_storms: int=1):
+         number_of_storms: int=1,
+         storage_dirname: str|None=None,
+         GCM_data_type: str='atmos_4xdaily'):
 
     # 0. Obtain track data for a given model, experiment, and year range
     track_data = access_storm_tracks(model_name, experiment_name, year_range)
@@ -457,8 +496,8 @@ def main(model_name: str,
     # Specify number of processors to use
     number_procs = len(storm_IDs) if len(storm_IDs) < max_number_procs else max_number_procs
     # Define partial function to allow for using Pool.map since `track_data` is equivalent for all subprocesses
-    preloaded_storm_generator = functools.partial(storm_generator, model_name, experiment_name, track_data)
-    
+    preloaded_storm_generator = functools.partial(storm_generator,  model_name, experiment_name, track_data, storage_dirname, GCM_data_type)
+
     with Pool(processes=number_procs) as pool:
         pool.map(preloaded_storm_generator, storm_IDs)
         pool.close()
