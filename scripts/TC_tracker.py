@@ -18,6 +18,8 @@ __For each storm__:
 
 '''
 
+# User input package
+import argparse
 # Time packages
 import cftime, datetime, time
 # Numerical analysis packages
@@ -32,6 +34,8 @@ import cartopy, cartopy.crs as ccrs, matplotlib, matplotlib.pyplot as plt
 # Local imports
 import accessor, composite, composite_snapshots, derived, utilities, socket, visualization, tc_analysis, tc_processing, track_TCs
 
+import multiprocessing
+multiprocessing.set_start_method("spawn", force=True)
 from multiprocessing import Pool
 
 def access_storm_tracks(model_name: str,
@@ -404,7 +408,9 @@ def get_storm_basin_name(storm: xr.Dataset) -> str:
 def save_storm_netcdf(storm_gcm_data: xr.Dataset,
                       model_name: str,
                       experiment_name: str,
+                      GCM_data_type: str,
                       storage_dirname: str|None=None,
+                      number_of_lag_days: int=0,
                       overwrite: bool=False):
     
     ''' Save xArray Dataset to netCDF file. '''
@@ -421,12 +427,15 @@ def save_storm_netcdf(storm_gcm_data: xr.Dataset,
 
     # Obtain the basin name for the storm filename
     storm_basin = get_storm_basin_name(storm_gcm_data)
+    # Construct lag day substring
+    number_of_lag_days_str = f'p{abs(number_of_lag_days)}' if number_of_lag_days > 0 else f'm{abs(number_of_lag_days)}'
+    lag_day_substring = f'.lag_days-{number_of_lag_days_str}' if number_of_lag_days != 0 else f'.lag_days-0'
     # Build storm filename
-    storm_filename = f'TC.model-{model_name}.experiment-{experiment_name}.storm_ID-{storm_ID}.max_wind-{max_wind}.min_slp-{min_slp}.basin-{storm_basin}.nc'
+    storm_filename = f'TC.model-{model_name}.experiment-{experiment_name}.storm_ID-{storm_ID}.max_wind-{max_wind}.min_slp-{min_slp}.data_type-{GCM_data_type}.basin-{storm_basin}{lag_day_substring}.nc'
     storm_pathname = os.path.join(storage_dirname, storm_filename)
     
     # Load the data into memory before saving to ensure output is fully there
-    print(f'[save_storm_netcdf] Loading data for {storm_filename}')
+    print(f'[save_storm_netcdf] Loading data for {storm_filename}...')
 
     # Profile loading time
     start_time = time.time()
@@ -442,9 +451,12 @@ def save_storm_netcdf(storm_gcm_data: xr.Dataset,
         # Save the data
         storm_gcm_data.to_netcdf(storm_pathname)
     
-def storm_generator(track_data: pd.DataFrame,
+def storm_generator(model_name: str,
+                    experiment_name: str,
+                    track_data: pd.DataFrame,
                     storage_dirname: str|None,
                     GCM_data_type: str,
+                    number_of_lag_days: int,
                     storm_ID: str):
 
     ''' Method to perform all steps related to binding corresponding GFDL QuickTracks and GCM model output together for a given TC. '''
@@ -457,6 +469,7 @@ def storm_generator(track_data: pd.DataFrame,
         # 4. Get candidate storm timestamps
         storm_track_timestamps = storm_track_data['cftime']
         # 5. For each candidate storm timestamp, find corresponding `GCM output` file
+        storm_track_timestamps = storm_track_timestamps + pd.Timedelta(number_of_lag_days, 'D') # adjust days based on lag input
         storm_gcm_pathnames, storm_track_timestamps = get_storm_GCM_data(model_name, experiment_name, storm_track_timestamps, GCM_data_type=GCM_data_type)
         # 5a. Correct GFDL QuickTracks cftime timestamp format to match GCM output format
         storm_track_data['cftime'] = storm_track_timestamps
@@ -469,7 +482,7 @@ def storm_generator(track_data: pd.DataFrame,
         # 9. Append information from `track data` to netCDF object containing GCM output
         storm_gcm_data = join_track_GCM_data(storm_track_data, storm_gcm_data)
         # 10. Save xArray Dataset to netCDF file
-        save_storm_netcdf(storm_gcm_data, storage_dirname=storage_dirname)
+        save_storm_netcdf(storm_gcm_data, model_name, experiment_name, GCM_data_type=GCM_data_type, storage_dirname=storage_dirname, number_of_lag_days=number_of_lag_days)
     
 def main(model_name: str, 
          experiment_name: str, 
@@ -479,7 +492,9 @@ def main(model_name: str,
          latitude_range: tuple[int|float, int|float]=(-40, 40),
          number_of_storms: int=1,
          storage_dirname: str|None=None,
-         GCM_data_type: str='atmos_4xdaily'):
+         GCM_data_type: str='atmos_4xdaily',
+         number_of_lag_days: int|list[int]=0,
+         storm_IDs: list[str] | None=None):
 
     # 0. Obtain track data for a given model, experiment, and year range
     track_data = access_storm_tracks(model_name, experiment_name, year_range)
@@ -487,21 +502,80 @@ def main(model_name: str,
     track_data = intensity_filter(track_data, intensity_parameter, intensity_range)
     # 1b. Filter storms by latitude
     track_data = latitude_filter(track_data, intensity_parameter, latitude_range)
-    # 2. Obtain N randomized storm IDs from the filtered data, where 'N' is `number_of_storms`
-    storm_IDs = pick_storm_IDs(track_data, number_of_storms)
+    # 2. If no storm IDs are provided, obtain N randomized storm IDs from the filtered data, where 'N' is `number_of_storms`
+    storm_IDs = pick_storm_IDs(track_data, number_of_storms) if storm_IDs is None else storm_IDs
+
+    # 3. If the number of lag days provided is an int, convert to a string
+    if isinstance(number_of_lag_days, int):
+        number_of_lag_days = [number_of_lag_days]
+    else:
+        assert isinstance(number_of_lag_days, list), 'number_of_lag_days must be an integer or list of integers.'
 
     ''' Offload TC-specific data generation onto parallel processes. '''
     # Maximum number of processors for computation
-    max_number_procs = 20
+    max_number_procs = 8
     # Specify number of processors to use
     number_procs = len(storm_IDs) if len(storm_IDs) < max_number_procs else max_number_procs
-    # Define partial function to allow for using Pool.map since `track_data` is equivalent for all subprocesses
-    preloaded_storm_generator = functools.partial(storm_generator,  model_name, experiment_name, track_data, storage_dirname, GCM_data_type)
+    
+    for lag_day in number_of_lag_days:
+        print(f'[main] Working on lag day {lag_day}...')
+        # Define partial function to allow for using Pool.map since `track_data` is equivalent for all subprocesses
+        preloaded_storm_generator = functools.partial(storm_generator, model_name, experiment_name, track_data, storage_dirname, GCM_data_type, lag_day)
 
-    with Pool(processes=number_procs) as pool:
-        pool.map(preloaded_storm_generator, storm_IDs)
-        pool.close()
+        with Pool(processes=number_procs) as pool:
+            pool.map(preloaded_storm_generator, storm_IDs)
+            pool.close()
+            
+        del preloaded_storm_generator
         
+    # Print completion message
+    print('Processing of TCs completed.')
+
+if __name__ == '__main__':
+    
+    ''' Initialize user input/output section. '''
+    # Catch user inputs
+    parser = argparse.ArgumentParser()
+    
+    # Required inputs
+    parser.add_argument('--model_name', type=str, help="Name of the model to extract data from.", required=True)
+    parser.add_argument('--experiment_name', type=str, help="Name of the experiment to extract data from.", required=True)
+    parser.add_argument('--year_range', type=str, help="Range of years to extract data from. Provide input in `YYYY:YYYY` format.", required=True)
+    # Optional inputs
+    
+    # Required inputs
+    parser.add_argument('--intensity_parameter', nargs='?', default='min_slp', type=str, help="Intensity parameter for TC filtering. Either `min_slp` or `max_wind`.")
+    parser.add_argument('--intensity_range', nargs='?', default='0:1020', type=str, help="Range of values over which to search for TCs for the given intensity range. Provide input in `X:Y` format.")
+    parser.add_argument('--number_of_storms', nargs='?', default=1, type=int, help="Number of TCs to generate data for.")
+    parser.add_argument('--GCM_data_type', nargs='?', default='atmos_4xdaily', type=str, help="Data type to extract files from. Usually `atmos_4xdaily` or `atmos_month`.")
+    parser.add_argument('--number_of_lag_days', nargs='?', default=0, type=str, help="Number of days from TC occurrence to sample GCM data from. Can be positive or negative, where a positive value is days after TC passage.")
+    parser.add_argument('--storage_dirname', nargs='?', default='/projects/GEOCLIM/gr7610/analysis/tc_storage/individual_TCs', type=str, help="Directory on the Tiger cluster to save data to.")
+    parser.add_argument('--storm_IDs', nargs='?', default='None', type=str, help="List of storm IDs saved as strings, delimited by a colon. Defaults to None.")
+    
+    
+    # Process inputs
+    args = parser.parse_args()
+    
+    # Process format-dependent arguments
+    args.year_range = tuple([int(year) for year in args.year_range.split(':')])
+    args.intensity_range = tuple([int(bound) for bound in args.intensity_range.split(':')])
+    args.storm_IDs = None if args.storm_IDs.lower() == 'none' else [storm_ID for storm_ID in args.storm_IDs.split(':')]
+    args.number_of_lag_days = [int(year) for year in args.number_of_lag_days.split(':')] if ':' in args.number_of_lag_days else int(args.number_of_lag_days)
+    # Print arguments for diagnostic
+    print(f'------------------------------------------------------------------\n{args}\n------------------------------------------------------------------')
+    
+    main(model_name=args.model_name, 
+         experiment_name=args.experiment_name,
+         year_range=args.year_range, 
+         intensity_parameter=args.intensity_parameter, 
+         intensity_range=args.intensity_range, 
+         number_of_storms=args.number_of_storms,
+         number_of_lag_days=args.number_of_lag_days,
+         GCM_data_type=args.GCM_data_type,
+         storage_dirname=args.storage_dirname,
+         storm_IDs=args.storm_IDs)
+    ''' End user input/output section. '''
+    
 ''' 
 Example snippet
 
