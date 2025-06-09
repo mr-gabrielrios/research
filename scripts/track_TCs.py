@@ -5,6 +5,7 @@ import numpy as np
 import os
 import xarray
 import cftime
+import sys
 import time
 from multiprocessing import Pool
 
@@ -86,7 +87,8 @@ def storm_criteria(storm: pd.DataFrame) -> pd.DataFrame:
     
 def access(model_name: str,
            experiment_name: str,
-           year_range: tuple[int, int]) -> dict:
+           year_range: tuple[int, int],
+           diagnostic: bool=False) -> dict:
 
     ''' Obtains pathnames for GFDL QuickTracks outputs as a function of model, experiment, and year range. '''
 
@@ -98,6 +100,9 @@ def access(model_name: str,
                                          experiment=experiment_name, 
                                          data_type='track_data')
     
+    if diagnostic:
+        print(f'[track_TCs.access] pulling tracks from root directory: {root_dirname}...')
+        
     # Retrieve subdirectories containing GFDL QuickTracks model outputs corresponding to a given year
     # Conditions are that (1) each subdirectory must contain the 'Harris.TC' subsubdirectory and (2) year is within `year_range` bounds
     # Assumes that year subdirectories are named with format `atmos_YYYY_YYYY`, where YYYY is a year.
@@ -108,6 +113,58 @@ def access(model_name: str,
     
     # Iterate over each annual subdirectory
     for track_dirname in track_dirnames:
+        if diagnostic:
+            print(f'[track_TCs.access] iterating over track directory: {track_dirname}...')
+            
+        # Retrieve names of data.
+        track_filenames = [track_filename for track_filename in os.listdir(track_dirname)
+                           if 'allstorms.world' in track_filename
+                           and track_filename.endswith('.txt')]
+        # Check on file length
+        assert len(track_filenames) == 1, f'Number of TCs files matching the criterion is {len(track_filenames)}, must be 1.'
+        # Build track path
+        track_pathname = os.path.join(track_dirname, track_filenames[0])
+        # Obtain year for which the path is constructed
+        track_year = int(track_pathname.split('/atmos_')[1].split('/')[0].split('_')[0])
+        # Add to container dictionary
+        track_pathnames[track_year] = track_pathname
+
+    return track_pathnames
+
+def access_global(root_dirname: str,
+           year_range: tuple[int, int],
+           diagnostic: bool=False) -> dict:
+    
+    ''' 
+    Obtains pathnames for GFDL QuickTracks outputs as a function of directory name and year range. 
+    
+    root_dirname: path to parent directory of Lucas Harris' TC tracker
+    --- path must be one level above the directory containing `atmos_XXX` subdirectories
+    --- this path will usually start with 'cyclones_gav'
+    '''
+
+    # Container dictionary with keys of year names and values of corresponding GFDL QuickTracks pathnames
+    track_pathnames = {}
+    
+    if diagnostic:
+        print(f'[track_TCs.access] pulling tracks from root directory: {root_dirname}...')
+        
+    # Retrieve subdirectories containing GFDL QuickTracks model outputs corresponding to a given year
+    # Conditions are that (1) each subdirectory must contain the 'Harris.TC' subsubdirectory and (2) year is within `year_range` bounds
+    # Assumes that year subdirectories are named with format `atmos_YYYY_YYYY`, where YYYY is a year.
+    track_dirnames = [os.path.join(root_dirname, year_dirname, 'Harris.TC') for year_dirname in os.listdir(root_dirname)
+                    if 'Harris.TC' in os.listdir(os.path.join(root_dirname, year_dirname))
+                    and int(year_dirname.split('_')[-1]) >= min(year_range)
+                    and int(year_dirname.split('_')[-1]) <= max(year_range)]
+    
+    if diagnostic:
+        print(f'[track_TCs.access] years found in {root_dirname} for requested range {year_range}: {track_dirnames}...')
+    
+    # Iterate over each annual subdirectory
+    for track_dirname in track_dirnames:
+        if diagnostic:
+            print(f'[track_TCs.access] iterating over track directory: {track_dirname}...')
+            
         # Retrieve names of data.
         track_filenames = [track_filename for track_filename in os.listdir(track_dirname)
                            if 'allstorms.world' in track_filename
@@ -165,7 +222,6 @@ def constructor(track_pathnames: dict,
                 diagnostic: bool = True) -> pd.DataFrame:
 
     ''' Builds a DataFrame concatenating filtered track data from all pathnames provided. '''
-
     
     # Begin profiling
     start_time = time.time()
@@ -218,8 +274,9 @@ def constructor(track_pathnames: dict,
                             # Filter the DataFrame per criteria defined in Lucas Harris' 2016 paper
                             if storm_table is not None:
                                 storm_table = storm_criteria(storm_table)
-                                annual_storm_tracks[annual_storm_number] = storm_table
-                                annual_track_number += 1
+                                if storm_table is not None:
+                                    annual_storm_tracks[annual_storm_number] = storm_table
+                                    annual_track_number += 1
                             # Reset storm track list
                             storm_track = []
                     else:
@@ -227,7 +284,11 @@ def constructor(track_pathnames: dict,
                         storm_track.append(line.strip().split())
             
             # Concatenate storm DataFrames
-            storm_tracks[track_year] = pd.concat(annual_storm_tracks.values())
+            if len(annual_storm_tracks) > 0:
+                storm_tracks[track_year] = pd.concat(annual_storm_tracks.values())
+            else:
+                print(f'No storms found that match criteria for year {track_year}.')
+                storm_tracks[track_year] = None
             
             if diagnostic:
                 print(f'[tc_tracks.constructor()] Elapsed time for year {track_year}: {(time.time() - start_time):.2f}s')
@@ -252,19 +313,27 @@ def load_IBTrACS(year_range: tuple[int, int]) -> pd.DataFrame:
     
     return storm_tracks
 
-def main(model_name: str,
-         experiment_name: str,
-         year_range: tuple[int, int],
-         run_parallel: bool=True) -> pd.DataFrame:
+def main(year_range: tuple[int, int],
+         model_name: str=None,
+         experiment_name: str=None,
+         pathname: str=None,
+         run_parallel: bool=True,
+         diagnostic: bool=False) -> pd.DataFrame:
 
     # Get storm track data for IBTrACS data
     if model_name == 'IBTrACS':
         storm_tracks = load_IBTrACS(year_range)
     # Get pathnames for GFDL QuickTracks data
     else:
-        track_pathnames = access(model_name, experiment_name, year_range)
+        if (model_name is not None) and (experiment_name is not None):
+            track_pathnames = access(model_name, experiment_name, year_range, diagnostic=diagnostic)
+        elif pathname is not None:
+            track_pathnames = access_global(pathname, year_range, diagnostic=diagnostic)
+        else:
+            print('A model and experiment name, or a valid directory path, must be provided to track TCs. Please retry.')
+            sys.exit()
         # Get storm track data
-        storm_tracks = constructor(track_pathnames, parallel=run_parallel)
+        storm_tracks = constructor(track_pathnames, parallel=run_parallel, diagnostic=diagnostic)
     
     return storm_tracks
 
@@ -273,4 +342,4 @@ if __name__ == '__main__':
     experiment_name = 'CTL1990s'
     year_range = (101, 105)
     run_parallel = False
-    main(model_name, experiment_name, year_range, run_parallel)
+    main(year_range, model_name, experiment_name, run_parallel)
