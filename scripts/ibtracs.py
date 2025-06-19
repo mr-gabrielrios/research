@@ -139,7 +139,12 @@ def intensity_categorization(dataset: pd.DataFrame,
     container = []
     intensity_category_bins = intensity_categories(intensity_scale)
     
-    cut_bins = np.array([min(intensity_bin) for intensity_bin in intensity_category_bins.values()])
+    # Get bins for grouping
+    cut_bins = np.array([min(intensity_bin) for intensity_bin in sorted(intensity_category_bins.values())])
+    # Append maximum value to ensure most intense bin is captured
+    maximum_bin_value = max([max(intensity_bin) for intensity_bin in sorted(intensity_category_bins.values())])
+    cut_bins = np.append(cut_bins, maximum_bin_value)
+    
     for intensity_category, intensity_category_entries in dataset.groupby(pd.cut(dataset['max_wind'], cut_bins)):
         
         intensity_category_name = None
@@ -257,12 +262,15 @@ def main(basin_name: str='global',
 
     # Perform non-intensity filtering and metadata generation
     filtered_dataset = filter_storms(dataset, filter_values=filter_values, diagnostic=False)
+    
     # Generate GFDL QuickTracks-style DataFrame
     track_data = generate_dataframe(filtered_dataset)
 
     # Perform intensity filtering
     # Note: intensity filtering is easier after initial filtering and DataFrame conversion
     track_data = TC_tracker.intensity_filter(track_data, intensity_parameter, intensity_range)
+    
+    print(track_data['max_wind'].describe())
 
     # Assign intensity category
     track_data = intensity_categorization(track_data)
