@@ -168,24 +168,38 @@ def storm_interpolation_grid_basis_vectors(storm: xr.Dataset,
 
 def storm_centered_interpolation(snapshot: xr.Dataset,
                                  field_name: str,
-                                 window_size: int=10) -> xr.DataArray:
+                                 window_size: int=10,
+                                 model_name: str=None,
+                                 diagnostic: bool=False) -> xr.DataArray:
+    
+    if diagnostic:
+        print(f'[storm_centered_interpolation] available snapshot data variables: {snapshot.data_vars}')
 
+    # Define dimension names based on the model
+    dimension_name_x = 'longitude' if model_name == 'CERES' else 'grid_xt'
+    dimension_name_y = 'latitude' if model_name == 'CERES' else 'grid_yt'
+    
     # Generate storm-centered coordinates.
     # This will remove dependence on global coordinates and allow for storm-centered compositing.
-    arr_x = snapshot.grid_xt - snapshot['center_lon']
-    arr_y = snapshot.grid_yt - snapshot['center_lat']
+    arr_x = snapshot[dimension_name_x] - snapshot['center_lon']
+    arr_y = snapshot[dimension_name_y] - snapshot['center_lat']
 
     # Generate storm ID list to serve as an axis for the storm identifier that will enable xArray-based compositing
     storm_ID = [snapshot.attrs['storm_id']]
+    center_lat = [snapshot['center_lat'].item()]
     # Expand dimensions of 2D data for the storm ID axis
-    snapshot_dataset = np.expand_dims(snapshot[field_name].data, axis=0)
+    snapshot_dataset = np.expand_dims(np.expand_dims(snapshot[field_name].data, axis=0), axis=0)
 
     # Generate the xArray DataArray
     snapshot_dataset = xr.DataArray(data=snapshot_dataset,
-                          dims=['storm_id', 'grid_yt_TC', 'grid_xt_TC'],
+                          dims=['storm_id', 'grid_yt', 'grid_yt_TC', 'grid_xt_TC'],
                           coords={'grid_xt_TC': (['grid_xt_TC'], arr_x.data),
                                   'grid_yt_TC': (['grid_yt_TC'], arr_y.data),
-                                  'storm_id': (['storm_id'], storm_ID)})
+                                  'storm_id': (['storm_id'], storm_ID),
+                                  'center_lat': (['grid_yt'], center_lat)})
+
+    if model_name == 'CERES':
+        snapshot = snapshot.rename_dims({dimension_name_x: 'grid_xt', dimension_name_y: 'grid_yt'})
 
     # To allow for the combination of different TCs, interpolate the storm-centered coordinates to common axis values based on the window size.
     arr_x_interp, arr_y_interp = storm_interpolation_grid_basis_vectors(snapshot, window_size)
@@ -303,6 +317,7 @@ def generate_TC_snapshot(model_name: str,
                                          snapshot.sel(time=snapshot_timestamp, method='nearest')['center_lat'].item(), 
                                          snapshot.sel(time=snapshot_timestamp, method='nearest')['center_lon'].item())
     
+    
     # Select the converted timestamp and remove null data
     snapshot = snapshot.sel(time=snapshot_timestamp, method='nearest').dropna(dim='grid_xt', how='all').dropna(dim='grid_yt', how='all')
     
@@ -311,8 +326,10 @@ def generate_TC_snapshot(model_name: str,
     # Perform grid redefinition and associated spatial interpolation
     interpolated_snapshot = storm_centered_interpolation(snapshot, 
                                                          field_name=field_name, 
-                                                         window_size=window_size)
+                                                         window_size=window_size,
+                                                         model_name=None)
     interpolated_snapshot['local_time'] = snapshot_local_time
+    interpolated_snapshot['min_slp'] = snapshot['min_slp'].item()
     
     return interpolated_snapshot
 
@@ -411,7 +428,8 @@ def get_time_window(dataset: xr.Dataset,
 def sample_GCM_constructor(snapshot: xr.Dataset,
                            GCM_snapshot: xr.Dataset,
                            field_name: str,
-                           window_size: int=10):
+                           window_size: int=10,
+                           model_name=None):
 
     ''' Modify GCM data into a TC-centered dataset. ''' 
 
@@ -422,7 +440,8 @@ def sample_GCM_constructor(snapshot: xr.Dataset,
     # Perform storm-centered interpolation for GCM data
     interpolated_GCM_snapshot = storm_centered_interpolation(snapshot=GCM_snapshot,
                                                              field_name=field_name,
-                                                             window_size=window_size)    
+                                                             window_size=window_size,
+                                                             model_name=model_name)    
 
     return interpolated_GCM_snapshot
 
@@ -437,6 +456,10 @@ def get_sample_GCM_data(model_name: str,
                         sampling_day_window: int=5):
 
     ''' Method to pull GCM data corresponding to a given TC snapshot. '''
+    
+    # Define dimension names based on the model
+    dimension_name_x = 'longitude' if model_name == 'CERES' else 'grid_xt'
+    dimension_name_y = 'latitude' if model_name == 'CERES' else 'grid_yt'
 
     # Construct field dictionary for postprocessed data loading
     # See `utilities.postprocessed_data_load` for details.
@@ -459,7 +482,7 @@ def get_sample_GCM_data(model_name: str,
     grid_xt_extent = slice(longitude - window_size, longitude + window_size)
     grid_yt_extent = slice(latitude - window_size, latitude + window_size)
     # Trim the data spatially
-    sample_GCM_data_filtered_space = sample_GCM_data.sortby('grid_yt').sel(grid_xt=grid_xt_extent).sel(grid_yt=grid_yt_extent)
+    sample_GCM_data_filtered_space = sample_GCM_data.sortby(dimension_name_y).sel({dimension_name_x: grid_xt_extent}).sel({dimension_name_y: grid_yt_extent})
     # Subsample over the time window specified: (iterand timestamp - sampling_day_window) to (iterand_timestamp + sampling_day_window)
     sample_GCM_data_filtered_time = get_time_window(sample_GCM_data_filtered_space, snapshot_timestamp, sampling_day_window)
     
@@ -506,7 +529,7 @@ def generate_composite_climatology_sample(model_name: str,
                                           window_size)
     
     # Construct TC-centered GCM xarray object
-    sample_GCM_data = sample_GCM_constructor(snapshot, sample_GCM_data, field_name)
+    sample_GCM_data = sample_GCM_constructor(snapshot, sample_GCM_data, field_name, model_name=model_name)
 
     return sample_GCM_data
 
@@ -833,13 +856,18 @@ def plot_composite(composite_TC_samples: dict,
 
 def save_composites(composite_TC_samples: dict,
                     configuration_name: str,
+                    composite_type: str,
                     field_name: str,
                     year_range: list[int, int] | tuple[int, int],
                     intensity_range: list[int, int] | tuple[int, int],
                     basin_name: str,
+                    pressure_level: int|float|None,
                     dirname: str):
-    
-    filename = f'configuration.{configuration_name}.field_name.{field_name}.year_range.{min(year_range)}_{max(year_range)}.intensity_range.{min(intensity_range)}_{max(intensity_range)}.basin.{basin_name}.nc'
+
+    assert composite_type in ['TC', 'GCM', 'TC-GCM'], 'Composite mode must be specified as `TC`, `GCM`, or `TC-GCM`.'
+
+    pressure_level_substr = f'.pressure_level.{pressure_level:0d}' if pressure_level is not None else ''
+    filename = f'{composite_type}.configuration.{configuration_name}.field_name.{field_name}{pressure_level_substr}.year_range.{min(year_range)}_{max(year_range)}.intensity_range.{min(intensity_range)}_{max(intensity_range)}.basin.{basin_name}.nc'
     pathname = os.path.join(dirname, filename)
 
     print(f'Saving composite data to {pathname}...')
@@ -848,13 +876,13 @@ def save_composites(composite_TC_samples: dict,
         override = input('File already exists - do you wish to override? [y/n]\n')
         if 'y' in override:
             os.remove(pathname)
-            composite_TC_samples[configuration_name].to_dataset(name=field_name).to_netcdf(pathname)
+            composite_TC_samples.to_dataset(name=field_name).to_netcdf(pathname)
         else:
             import sys
             print(f'File at {pathname} not overridden. Exiting...')
             sys.exit()
     else:
-        composite_TC_samples[configuration_name].to_dataset(name=field_name).to_netcdf(pathname)
+        composite_TC_samples.to_dataset(name=field_name).to_netcdf(pathname)
 
 def composite_convergence_check(composite_samples: xr.Dataset,
                                 configuration_name: str,
@@ -974,8 +1002,11 @@ def main(compositing_mode: str,
          intensity_parameter: str='min_slp',
          intensity_range: tuple[int|float, int|float]=(0, np.inf),
          number_of_snapshots: int=-1,
+         save_data: bool=False,
          parallel: bool=False) -> xr.Dataset | tuple[xr.Dataset, xr.Dataset]:
 
+    pressure_level = None
+    
     # Constrain analysis modes to TC (tropical cyclone composites only) or anomaly (tropical cyclone and climatological composites)
     compositing_modes = ['TC', 'anomaly']
     assert compositing_mode in compositing_modes, f'Compositing mode must be one of {compositing_modes}. Please retry by specifying argument `compositing_mode` as one of these.' 
@@ -994,6 +1025,20 @@ def main(compositing_mode: str,
                                                        parallel=parallel)
         
         print(f'Time elapsed for TCs: {(time.time() - start_time):.2f} s; per snapshot: {((time.time() - start_time)/len(composite_TC_snapshots.storm_id.values)):.2f} s.')
+        
+        # Save composites to a file, if chosen
+        if save_data:
+            storage_dirname = '/projects/GEOCLIM/gr7610/analysis/TC-RAD/data'
+            configuration_name = f'{model_name}-{experiment_name}'
+            save_composites(composite_TC_snapshots,
+                            configuration_name,
+                            composite_type='TC',
+                            field_name=field_name,
+                            year_range=year_range,
+                            intensity_range=intensity_range,
+                            basin_name=basin_name,
+                            pressure_level=pressure_level,
+                            dirname=storage_dirname)
         
         return composite_TC_snapshots
         
@@ -1020,8 +1065,51 @@ def main(compositing_mode: str,
                                                                  TC_snapshot_entries,
                                                                  parallel=parallel)
 
+        # Interpolate GCM data to TC resolution
+        composite_GCM_snapshots = composite_GCM_snapshots.interp(grid_xt_TC=composite_TC_snapshots.grid_xt_TC, 
+                                                                 grid_yt_TC=composite_TC_snapshots.grid_yt_TC)
+        
+        # Derive anomaly of TCs from the climatology (TC - climatology)
+        composite_anomaly_snapshots = composite_TC_snapshots - composite_GCM_snapshots
+        
         print(f'Time elapsed for GCM data: {(time.time() - start_time):.2f} s; per snapshot: {((time.time() - start_time)/len(TC_snapshot_entries)):.2f} s.')
         
+        # Save composites to a file, if chosen
+        if save_data:
+            storage_dirname = '/projects/GEOCLIM/gr7610/analysis/TC-RAD/data'
+            configuration_name = f'{model_name}-{experiment_name}'
+            # Save TC snapshots
+            save_composites(composite_TC_snapshots,
+                            configuration_name,
+                            composite_type='TC',
+                            field_name=field_name,
+                            year_range=year_range,
+                            intensity_range=intensity_range,
+                            basin_name=basin_name,
+                            pressure_level=pressure_level,
+                            dirname=storage_dirname)
+            
+            # Save GCM snapshots
+            save_composites(composite_GCM_snapshots,
+                            configuration_name,
+                            composite_type='GCM',
+                            field_name=field_name,
+                            year_range=year_range,
+                            intensity_range=intensity_range,
+                            basin_name=basin_name,
+                            pressure_level=pressure_level,
+                            dirname=storage_dirname)
+            
+            # Save anomaly snapshots
+            save_composites(composite_anomaly_snapshots,
+                            configuration_name,
+                            composite_type='TC-GCM',
+                            field_name=field_name,
+                            year_range=year_range,
+                            intensity_range=intensity_range,
+                            basin_name=basin_name,
+                            pressure_level=pressure_level,
+                            dirname=storage_dirname)
 
         return (composite_TC_snapshots, composite_GCM_snapshots)
 
