@@ -1,5 +1,6 @@
 import matplotlib, matplotlib.pyplot as plt
 import numpy as np
+import os
 import sys
 import xarray as xr
 
@@ -10,7 +11,8 @@ import visualization
 def multiplot_TC_GCM_composite(configuration_data: dict,
                                field_name: str,
                                contour_levels: int=12,
-                               maximum_latitude: int=30):
+                               maximum_latitude: int=30,
+                               savefig: bool=False):
 
     ''' 
     Method to plot composite means of TC and GCM fields, 
@@ -35,8 +37,9 @@ def multiplot_TC_GCM_composite(configuration_data: dict,
 
     fig_width = ax_width * np.sum(width_ratios) + (wspace * ncols * ax_width) # final figure width
     fig_height = ax_width * np.sum(height_ratios) + (hspace * nrows * ax_width) # final figure height
+    dpi = 300 if savefig else 144
 
-    fig, gs = [plt.figure(figsize=(fig_width, fig_height)),
+    fig, gs = [plt.figure(figsize=(fig_width, fig_height), dpi=dpi),
                matplotlib.gridspec.GridSpec(nrows=nrows, ncols=ncols, 
                                             wspace=wspace, hspace=hspace, 
                                             width_ratios=width_ratios, height_ratios=height_ratios)]
@@ -57,6 +60,22 @@ def multiplot_TC_GCM_composite(configuration_data: dict,
                               fig=fig,
                               gs=gs,
                               ax_index=config_index)
+
+    # Add figure labels
+    long_name, units = visualization.field_properties(field_name)
+    fig.supxlabel('degrees from TC center')
+    fig.supylabel(f'{long_name} [{units}]', fontsize=10) # left-hand y-label
+    fig.text(0.95, 0.5, f'$\delta$ (TC — GCM) [{units}]', ha='center', va='center', rotation=270, fontsize=10) # right-hand y-label
+
+    # Save the figure, is the option is chosen
+    if savefig:
+        # Define storage parameters
+        storage_model_name = [config_name.split(':')[0] for config_name in configuration_data.keys()][0]
+        storage_experiment_names = ':'.join([config_name.split(':')[1] for config_name in configuration_data.keys()])
+        storage_dirname = '/projects/GEOCLIM/gr7610/analysis/TC-AQP/figs'
+        storage_filename = f'TC-GCM.configuration.{storage_model_name}-{storage_experiment_names}.field_name.{field_name}.pdf'
+        # Save the figure
+        plt.savefig(os.path.join(storage_dirname, storage_filename), dpi=dpi, bbox_inches='tight', format='pdf')
 
 def plot_TC_GCM_composite(entries_TC: xr.Dataset,
                           entries_GCM: xr.Dataset,
@@ -103,15 +122,24 @@ def plot_TC_GCM_composite(entries_TC: xr.Dataset,
                                       'max': config_means[config_key].max().item(), 
                                       'count': value['storm_id'].count().item()}
     
-    # Define normalization parameters
+    # Define normalization parameters for raw experiment values
     experiment_norm, experiment_cmap = visualization.norm_cmap([], 
                                                                field=field_name, 
                                                                extrema=(min([config_extrema['TC']['min'], config_extrema['GCM']['min']]),
                                                                         max([config_extrema['TC']['max'], config_extrema['GCM']['max']])),
                                                                num_bounds=contour_levels) # for TC and GCM
+    
+    # Define normalization parameters for difference experiment
+    if field_name in ['netrad_toa']: 
+        # Override difference extrema for net radiation to ensure centered extrema about zero
+        extremum = max([abs(config_extrema['TC—GCM']['min']), abs(config_extrema['TC—GCM']['max'])]) 
+        extrema = (-extremum, extremum)
+    else:
+        extrema = (config_extrema['TC—GCM']['min'], config_extrema['TC—GCM']['max'])
+
     difference_norm, difference_cmap = visualization.norm_cmap([], 
                                                                field=field_name, 
-                                                               extrema=(config_extrema['TC—GCM']['min'], config_extrema['TC—GCM']['max']),
+                                                               extrema=extrema,
                                                                num_bounds=contour_levels) # for the TC-GCM difference
     
     # Second pass: plot data
@@ -129,17 +157,25 @@ def plot_TC_GCM_composite(entries_TC: xr.Dataset,
         ims[config_key] = ax.pcolormesh(config_means[config_key].grid_xt_TC, config_means[config_key].grid_yt_TC, config_means[config_key], norm=norm, cmap=cmap)
     
         # Plot metadata
-        if row_index == 0: ax.set_title(config_key, fontsize=11)
+        if row_index == 0: ax.set_title(f'{model_name}, {config_key}', fontsize=10)
         if col_index > 0: ax.set_yticklabels([]) 
         if fig is not None and (row_index != (gs.nrows-1)): ax.set_xticklabels([]) 
         ax.set_aspect('equal')
     
+        # Plot subfigure letter
+        subplot_figure_index = row_index * (gs.ncols - 2) + col_index # calculate iterand subfigure index, subtract 2 for colorbars
+        subplot_figure_letter = visualization.get_alphabet_letter(subplot_figure_index) # get subfigugre letter
+        letter_annotation = ax.annotate(f'({subplot_figure_letter}) {experiment_name.split('.')[1]}', xy=(0.03, 0.96), xycoords='axes fraction', 
+                                        ha='left', va='top', fontsize=9)
+        letter_annotation.set_path_effects([matplotlib.patheffects.Stroke(linewidth=2, foreground=(1, 1, 1, 0.75)),
+                                            matplotlib.patheffects.Normal()])
+
         # Plot annotation with statistics
         statistics = f'N = {config_extrema[config_key]['count']}\n({config_extrema[config_key]['min']:.1f}, {config_extrema[config_key]['max']:.1f})'
-        annotation = ax.annotate(statistics, xy=(0.03, 0.03), xycoords='axes fraction', 
-                                 c='k', fontsize=8, ha='left', va='bottom')
-        annotation.set_path_effects([matplotlib.patheffects.Stroke(linewidth=2, foreground=(1, 1, 1, 0.75)),
-                                     matplotlib.patheffects.Normal()])
+        statistics_annotation = ax.annotate(statistics, xy=(0.03, 0.03), xycoords='axes fraction',
+                                            c='k', fontsize=8, ha='left', va='bottom')
+        statistics_annotation.set_path_effects([matplotlib.patheffects.Stroke(linewidth=2, foreground=(1, 1, 1, 0.75)),
+                                                matplotlib.patheffects.Normal()])
     
     # Third pass: plot colorbars
     for index, config_key in enumerate(configs.keys()):
@@ -166,10 +202,10 @@ def plot_TC_GCM_composite(entries_TC: xr.Dataset,
 
         if config_key in ['TC', 'GCM']:
             cax.yaxis.set_ticks_position('left')
-            colorbar.set_label(f'{long_name} [{units}]', labelpad=-60)
+            if ax_index is None: colorbar.set_label(f'{long_name} [{units}]', labelpad=-60)
         else:
             cax.yaxis.set_ticks_position('right')
-            colorbar.set_label(f'{long_name} [{units}]', rotation=270, labelpad=20)
+            if ax_index is None: colorbar.set_label(f'{long_name} [{units}]', rotation=270, labelpad=20)
 
 
     if fig is None:
