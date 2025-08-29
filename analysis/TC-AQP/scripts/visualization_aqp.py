@@ -11,17 +11,71 @@ xr.set_options(keep_attrs=True)
 # Visualization tools
 import cartopy, cartopy.util as cutil, cartopy.crs as ccrs, matplotlib, matplotlib.pyplot as plt
 
-import analysis
-
 # Local imports
+import analysis, zonal_mean
 sys.path.insert(1, '/projects/GEOCLIM/gr7610/scripts')
 import derived, tc_analysis, utilities, visualization, track_TCs
-importlib.reload(utilities)
-importlib.reload(analysis)
-importlib.reload(visualization)
-importlib.reload(tc_analysis)
-importlib.reload(derived)
-importlib.reload(track_TCs)
+
+def get_derived_fields(dataset: xr.Dataset,
+                       diagnostic: bool=False) -> xr.Dataset:
+
+    diagnostic_tag = '[get_derived_fields()]'
+
+    assert isinstance(dataset, xr.Dataset), f'Input data must be an xarray Dataset. It is currently of type {type(dataset)}.'
+
+    # Define each derived field by its constituent fields and the derivation function.
+    derived_fields = {'p-e': {'field_names': ['precip', 'evap'],
+                              'func': lambda x: x['precip'] - x['evap'],
+                              'long_name': 'surface moisture flux',
+                              'units': 'mm d$^{-1}$'},
+                      'swabs_toa': {'field_names': ['swdn_toa', 'swup_toa'],
+                                    'func': lambda x: x['swdn_toa'] - x['swup_toa'],
+                                    'long_name': 'absorbed shortwave radiation',
+                                    'units': 'W m$^{-2}$'},
+                      'netrad_sfc': {'field_names': ['swup_sfc', 'swdn_sfc', 'lwup_sfc', 'lwdn_sfc'],
+                                      'func': lambda x: -x['swup_sfc'] + x['swdn_sfc'] - x['lwup_sfc'] + x['lwdn_sfc'],
+                                      'long_name': 'net downward surface radiative flux (+ down)',
+                                      'units': 'W m$^{-2}$'},
+                      'q_atm': {'field_names': ['netrad_toa', 'netrad_sfc', 'shflx', 'precip'],
+                                'func': lambda x: x['netrad_toa'] - x['netrad_sfc'] + x['shflx'] + (x['precip'] / 86400) * utilities.get_constants('L_v'),
+                                'long_name': 'net atmospheric heating',
+                                'units': 'W m$^{-2}$'},
+                      'le': {'field_names': ['evap'],
+                             'func': lambda x: (x['evap'] / 86400) * utilities.get_constants('L_v'),
+                             'long_name': 'latent heat flux',
+                             'units': 'W m$^{-2}$'},
+                      'div_atm': {'field_names': ['netrad_toa', 'netrad_sfc', 'le', 'shflx'],
+                                  'func': lambda x: x['netrad_toa'] - x['netrad_sfc'] +  x['le'] + x['shflx'],
+                                  'long_name': 'horizontal divergence of atmospheric energy',
+                                  'units': 'W m$^{-2}$'},
+                      'div_lq': {'field_names': ['p-e'],
+                                 'func': lambda x: -(x['p-e'] / 86400) * utilities.get_constants('L_v'),
+                                 'long_name': 'horizontal divergence of latent energy',
+                                 'units': 'W m$^{-2}$'},
+                      'omega_daily': {'field_names': ['omega'],
+                                'func': lambda x: x['omega'] * 86400,
+                                'long_name': 'pressure velocity',
+                                'units': 'Pa d$^{-1}$'},
+                      'psi_m': {'field_names': ['vcomp'],
+                                'func': lambda x: utilities.meridional_overturning(x)['psi_m'],
+                                'long_name': 'meridional streamfunction',
+                                'units': 'kg s$^{-1}$'}}
+
+    # Iterate over all fields and derived if the constituent fields are in the dataset.
+    for derived_field, derived_dict in derived_fields.items():
+        if diagnostic:
+            print(f'{diagnostic_tag} Inspecting data to derive field {derived_field} using {derived_dict['field_names']}...')
+            
+        # Check that all fields for derived quantity are in dataset
+        check_fields = [field in dataset.data_vars for field in derived_dict['field_names']]
+        if not (sum(check_fields) == len(derived_dict['field_names'])):
+            if diagnostic:
+                print(f'{diagnostic_tag} not all fields found for data when deriving {derived_field}; only fields ...')
+            continue
+        # Derive the quantity
+        dataset[derived_field] = derived_dict['func'](dataset)
+        
+    return dataset
 
 def get_experiment_alias(experiment_name: str) -> str:
     
@@ -521,60 +575,95 @@ def plot_multiexperiment_means_1D(experiment_configurations: dict,
         plt.savefig(storage_pathname, transparent=True, dpi=dpi, bbox_inches='tight')
 
 def TC_parameter_distribution(track_data: dict,
-                              experiment_names: str | list[str]=None,
+                              configuration_names: str | list[str]=None,
                               distribution_parameter: str='min_slp',
                               sampling_method: str='all',
                               plot_median: bool=False,
                               normalize_by_year: bool=False,
-                              savefig: bool=False):
+                              latitude_bin_size: float=4,
+                              label_start_index: int=0,
+                              savefig: bool=False,
+                              diagnostic: bool=False):
 
     ''' Plot distribution histogram for a given parameter. Intensity parameters are shown at the provided sampling method. '''
 
+    diagnostic_tag = '[TC_parameter_distribution()]'
     assert distribution_parameter in ['min_slp', 'max_wind', 'duration', 'center_lat'], 'Intensity parameter must be `min_slp`, `max_wind`, `center_lat`, or `duration`.'
+
+    # Define colormap (2 samples from colormap, one for control and one for perturbation)
+    colors = visualization.get_colormap_samples(number_of_samples=3, colormap_name='coolwarm')
+    colors = [colors[0], colors[2], (0.625, 0.625, 0.625)] # manual override to place IBTrACS as a reference plot
 
     # Define TC sampling method and corresponding function
     # 'genesis' == TC genesis, which is assigned to the first timestamp of 'raw')
     # 'LMI'     == lifetime maximum intensity, which is assigned to 'unique')
     # 'lysis'   == TC lysis, which is assigned to the last timestamp of 'raw')
     # 'all'     == all TC timestamps, which is assigned to 'raw')
+    sampling_category = 'unique' if sampling_method == 'LMI' else 'raw'
     sampling_types = {'genesis': lambda x, name, parameter: np.array([n.sort_values('time').iloc[0][parameter].item() 
-                                                                      for _, n in x[name]['raw'].groupby('storm_id')]),
+                                                                      for _, n in x[name][sampling_category].groupby('storm_id')]),
                       'lysis': lambda x, name, parameter: np.array([n.sort_values('time').iloc[-1][parameter].item() 
-                                                                    for _, n in x[name]['raw'].groupby('storm_id')]),
-                      'LMI': lambda x, name, parameter: x[name]['unique'][parameter],
-                      'all': lambda x, name, parameter: x[name]['raw'][parameter]} 
+                                                                    for _, n in x[name][sampling_category].groupby('storm_id')]),
+                      'LMI': lambda x, name, parameter: x[name][sampling_category][parameter],
+                      'all': lambda x, name, parameter: x[name][sampling_category][parameter]} 
     
     # Define metadata
     parameter_properties = {'min_slp': {'long_name': 'Minimum sea-level pressure [hPa]',
-                                        'histogram_interval': 2.5},
+                                        'histogram_interval': 4},
                             'max_wind': {'long_name': 'Maximum 10 m wind speed [m s$^{-1}$]',
                                          'histogram_interval': 1},
                             'duration': {'long_name': 'Duration of TC lifetime [days]',
-                                         'histogram_interval': 5},
+                                         'histogram_interval': 1},
                             'center_lat': {'long_name': 'Latitude',
-                                           'histogram_interval': 2.5}}
+                                           'histogram_interval': latitude_bin_size}}
     # Initialize extrema containers
     vmin, vmax = np.nan, np.nan
-    # Container list for configuration aliases
-    configuration_alias_container = []
-    
-    # Define colormap
-    colormap = 'tab10'
-    colors = matplotlib.colormaps[colormap](np.linspace(0.1, 0.9, len(track_data.keys())))
 
     # Initialize container for number of years per experiment, for temporal normalization purposes
-    num_years = {}
+    number_of_years = {}
+    # Intitialize container for storm counts
+    count_TC = {}
+    # Experiment aliases
+    experiment_aliases = {'CTL': 'CTL', 'EXP': 'SWISHE', 'OBS': 'IBTrACS'}
 
-    # Iterate over experiemnts to get extrema
-    for configuration_name in track_data.keys():
-        model_name, experiment_name = configuration_name.split('-')
-        experiment_data = sampling_types[sampling_method](track_data, configuration_name, distribution_parameter)
+    # Initialize dictionary for configuration data
+    configurations = {}
+    for config_name in track_data.keys():
+        if diagnostic: print(f'{diagnostic_tag} working on configuration {config_name}...')
+        # Pull configuration-specific metadata
+        model_name = config_name.split('-')[0] # get model name
+        experiment_type, config_type = config_name.split('-')[1].split('.') # get experiment and configuration names
+        configurations[f'{model_name}-{config_type}'] = {experiment_aliases[k]: None for k in ['CTL', 'EXP', 'OBS']}
+        count_TC[f'{model_name}-{config_type}'] = {experiment_aliases[k]: None for k in ['CTL', 'EXP', 'OBS']}
+
+    # Second pass: scrape TC track data for all configurations and place into a custom data structure for control-perturbation comparison
+    for config_name in track_data.keys():
+        if diagnostic: print(f'{diagnostic_tag} scraping data for configuration {config_name}...')
+        # Pull configuration-specific metadata
+        model_name = config_name.split('-')[0] # get model name
+        experiment_type, config_type = config_name.split('-')[1].split('.') # get experiment and configuration names
+        if diagnostic: print(f'---> model_name {model_name}; experiment_type: {experiment_type}; configuration type: {config_type}...')
+
+        # Assign configuration type as a binary of either control or SWISHE
+        assert experiment_type in ['CTL1990', 'CTL1990_SWISHE', 'IBTrACS'], f'Experiment type is currently restricted to three entries: `CTL1990`, `CTL1990_SWISHE`, and `IBTrACS`. Please check this configuration, {experiment_type}.'
+        experiment_type = experiment_aliases['CTL'] if experiment_type == 'CTL1990' else experiment_aliases['EXP'] if experiment_type == 'CTL1990_SWISHE' else experiment_aliases['OBS']
+
+        # Get configuration data
+        experiment_data = sampling_types[sampling_method](track_data, config_name, distribution_parameter)
+        # Assign dictionary 
+        configurations[f'{model_name}-{config_type}'][experiment_type] = experiment_data
+        count_TC[f'{model_name}-{config_type}'][experiment_type] = len(track_data[config_name]['unique']['storm_id'].unique())
+
         # Get extrema
         vmin = experiment_data.min() if (experiment_data.min() < vmin or np.isnan(vmin)) else vmin
         vmax = experiment_data.max() if (experiment_data.max() > vmax or np.isnan(vmax)) else vmax
-        # Get number of years for each experiment
-        num_years[experiment_name] = np.round((track_data[configuration_name]['unique']['time'].max() - track_data[configuration_name]['unique']['time'].min()).days / 365)
-    
+        # Get number of year for the iterand configuration
+        number_of_years[f'{model_name}-{config_type}-{experiment_type}'] = np.round((track_data[config_name][sampling_category]['time'].max() - track_data[config_name][sampling_category]['time'].min()).days / 365)
+        
+        if diagnostic: print(f'---> number of TCs for {config_name}: {count_TC[f'{model_name}-{config_type}'][experiment_type]}')
+        if diagnostic: print(f'---> number of years for {config_name}: {number_of_years[f'{model_name}-{config_type}-{experiment_type}']}')
+        if diagnostic: print(f'---> TC count per year for {config_name}: {(count_TC[f'{model_name}-{config_type}'][experiment_type] / number_of_years[f'{model_name}-{config_type}-{experiment_type}']):.1f}')
+
     # Get intensity bins
     distribution_bins = np.arange(vmin, 
                                   vmax + parameter_properties[distribution_parameter]['histogram_interval'], 
@@ -583,53 +672,125 @@ def TC_parameter_distribution(track_data: dict,
     # Initialize container to collect histogram counts for y-axis delimiting
     counts = np.array([])
     # Determine if a PDF or raw count will be output 
-    density = True if normalize_by_year else False 
-    # Plot histograms
+    density = False if distribution_parameter == 'center_lat' else True 
+    # Initialize the figure
     dpi = 300 if savefig else 144
-    fig, ax = plt.subplots(figsize=(6, 2), dpi=dpi)
+
+    ax_width = 3
+    ax_height = ax_width * 3 / 8
+    nrows, ncols = 5, 2
+    fig, gs = [plt.figure(dpi=dpi, figsize=(ax_width * ncols, ax_height * nrows)),
+               matplotlib.gridspec.GridSpec(nrows=5, ncols=2)]
+
+    # Define the row assignment for the iterand configuration
+    configuration_order = ['CONST', '0N', '15N', 'TIMEVAR', 'AMIP']
+    row_assignments = {configuration_name: configuration_order.index(configuration_name.split('-')[1]) 
+                       for configuration_name in configurations.keys()}
     
-    for configuration_number, configuration_name in enumerate(track_data.keys()):
-        model_name, experiment_name = configuration_name.split('-')
-        # Get iterand experiment data
-        experiment_data = sampling_types[sampling_method](track_data, configuration_name, distribution_parameter)
-        # Define dataset label
-        TC_counts = len(track_data[configuration_name]['raw']['storm_id'].unique())
-        TC_counts = TC_counts / num_years[experiment_name] if normalize_by_year else TC_counts # Normalize by number of years, if chosen
-        if distribution_parameter == 'center_lat':
-            if normalize_by_year:
-                label = f'{get_experiment_alias(experiment_name).upper()} (N={TC_counts:.1f} yr$^{{-1}}$)'
+    # Iterate over each model-configuration experiment pair
+    for config_index, config_name in enumerate(configurations.keys()):
+       # Get model and configuration names
+        model_name, config_type = config_name.split('-')
+        # Define model-configuration type entry
+        row_number, column_number = [row_assignments[config_name], 0 if 'AM2.5' in model_name else 1]
+        index_number = row_number + gs.nrows * column_number # get subplot index number for labeling
+        # Initialize the iterand subplot
+        ax = fig.add_subplot(gs[row_number, column_number])
+
+        ax_vmin, ax_vmax = 0, 0
+        if diagnostic: print(f'{diagnostic_tag} working on configuration {config_name} at row: {row_number}; column: {column_number}...')
+
+        ax.axvline(0, lw=0.5, c='k') # reference equatorial line
+        
+        # Get the maximum number of TCs by bin per configuration to compare control and perturbation experiments
+        config_TC_count = max([count_TC[f'{model_name}-{config_type}'][experiment_aliases['CTL']], 
+                               count_TC[f'{model_name}-{config_type}'][experiment_aliases['EXP']]])
+        config_medians = {}
+        # Iterate over configuration-specific experiments
+        for experiment_index, experiment_type in enumerate(configurations[config_name].keys()):
+            if experiment_type == 'IBTrACS' and 'AMIP' not in config_name: continue # only plot IBTrACS data for AMIP experiments
+            if diagnostic: print(f'{diagnostic_tag} plotting histogram from configuration {config_name}, configuration type {config_type}, experiment {experiment_type}...')
+
+            # Get iterand experiment data
+            experiment_data = configurations[f'{model_name}-{config_type}'][experiment_type]
+
+            # Get and plot the distribution median if latitude is not the distribution parameter, else get TC counts
+            if distribution_parameter == 'center_lat':
+                config_medians[experiment_type] = count_TC[f'{model_name}-{config_type}'][experiment_type] / number_of_years[f'{model_name}-{config_type}-{experiment_type}']       
             else:
-                label = f'{get_experiment_alias(experiment_name).upper()} (N={TC_counts:.1f})'
+                config_medians[experiment_type] = np.nanmedian(experiment_data)                            
+                ax.axvline(config_medians[experiment_type], lw=0.5, color=colors[experiment_index], ls='--')
+                
+            # IBTrACS-specific formatting
+            zorder = 0 if experiment_type == 'IBTrACS' else 5
+            # Plot the histogram
+            label = experiment_type if config_index == 0 else None
+            counts, _, _ = ax.hist(experiment_data, 
+                                   bins=distribution_bins, histtype='step', density=True,
+                                   color=colors[experiment_index], linewidth=1.5, label=label, zorder=zorder)
+
+            ax_vmax = max(counts) * 1.1 if max(counts) > ax_vmax else ax_vmax
+            ax_vmax = np.ceil(ax_vmax) if np.ceil(ax_vmax) - ax_vmax < ax_vmax else ax_vmax
+
+        # Axis limits
+        if distribution_parameter == 'center_lat':
+            ax.set_xlim([-90, 90]) 
+            ax.set_xticks(np.arange(-90, 90 + 30, 30))
+            ax.set_ylim([ax_vmin, ax_vmax])
+            ax.set_yticks(np.arange(ax_vmin, ax_vmax, 1))
+
+            ax.yaxis.set_major_locator(matplotlib.ticker.AutoLocator())
+        elif distribution_parameter == 'duration':
+            ax.set_xlim([0, 30]) 
         else:
-            label = f'{get_experiment_alias(experiment_name).upper()} ({np.median(experiment_data):.1f})'
-        # Get data distribution
-        experiment_counts, _, im = ax.hist(experiment_data, bins=distribution_bins, 
-                                           histtype='step', label=label, density=density,
-                                           color=colors[configuration_number], linewidth=1.5)
-        # Plot distribution median
-        if plot_median:
-            ax.axvline(np.median(experiment_data), lw=0.5, ls='--', c=colors[configuration_number])
-        # Extend the counts array to hold new counts
-        counts = np.concatenate([counts, experiment_counts])
-        print(f'Statistics for {experiment_name}: mean = {experiment_data.mean():.1f} +/- {experiment_data.std():.1f}; 10th percentile: {np.quantile(experiment_data, 0.1):.1f}; 90th percentile: {np.quantile(experiment_data, 0.9):.1f}')
+            ax.set_xlim([vmin, vmax]) 
 
-    # Plot metadata
-    ylabel_str = 'Probability density' if density else 'Count'
-    ax.set_xlabel(parameter_properties[distribution_parameter]['long_name'], labelpad=10)
-    ax.set_ylabel(ylabel_str, labelpad=10)
-    ax.set_ylim([0, np.max(counts)*1.1])
+        # Multiply probability density by 100 for percentages
+        formatter = matplotlib.ticker.FuncFormatter(lambda x, pos: f'{(x * 100)}')
+        ax.yaxis.set_major_formatter(formatter)
 
-    position_legend = (ax.get_position().x0, ax.get_position().y1)
-    ax.legend(frameon=False, loc='upper left', bbox_to_anchor=(0, 1.025), fontsize=7, labelspacing=0.25)
-    
-    storage_dirname = '/projects/GEOCLIM/gr7610/analysis/TC-CLIMO/figs'
-    figure_identifier = 'TC_distribution'
-    configuration_identifier = '-'.join([configuration_alias for configuration_alias in configuration_alias_container])
-    filename = f'{figure_identifier}.configuration_names.{configuration_identifier}.field_name.{distribution_parameter}.png'
+        # Plot subplot identification label
+        zorder_annotation = 99
+        label_annotation = f'{visualization.get_alphabet_letter(index_number + label_start_index)}) {config_type}'
+        ax.annotate(f'{label_annotation}', xy=(0.02, 0.93), xycoords='axes fraction', va='top', ha='left', fontsize=8, zorder=zorder_annotation)
+
+        # Plot median annotations
+        for experiment_index, experiment_type in enumerate(config_medians):
+            vertical_spacing = 0.14 # handles the vertical spacing of the annotations
+            # Handle distributions differently if the parameter is center latitude (print number of TCs per year) or other parameter (median)
+            if distribution_parameter != 'center_lat':
+                if distribution_parameter in ['duration', 'max_wind']:
+                    ann_y = 0.80 + experiment_index * vertical_spacing
+                    ax.annotate(f'{experiment_type}: {config_medians[experiment_type]:.1f}', 
+                                xy=(0.98, ann_y), xycoords='axes fraction', va='top', ha='right', fontsize=7, c=colors[experiment_index], zorder=zorder_annotation)
+                else:
+                    ann_y = 0.04 + (len(config_medians) - experiment_index - 1) * vertical_spacing
+                    ax.annotate(f'{experiment_type}: {config_medians[experiment_type]:.1f}', 
+                                xy=(0.02, ann_y), xycoords='axes fraction', va='bottom', ha='left', fontsize=7, c=colors[experiment_index], zorder=zorder_annotation)
+            else:
+                ann_y = 0.04 + (len(config_medians) - experiment_index - 1) * vertical_spacing
+                ax.annotate(f'{experiment_type}: {config_medians[experiment_type]:.1f}', 
+                            xy=(0.02, ann_y), xycoords='axes fraction', va='bottom', ha='left', fontsize=7, c=colors[experiment_index], zorder=zorder_annotation)
+
+        if row_number == 0: ax.set_title(model_name, fontsize=10)
+        if row_number < gs.nrows - 1:  ax.set_xticklabels([])
+            
+    fig.tight_layout()
+    ''' Figure labeling. '''
+    ylabel_str = 'Probability [%]'
+    fig.supxlabel(parameter_properties[distribution_parameter]['long_name'], fontsize=11, y=-0.05)
+    fig.supylabel(ylabel_str, fontsize=11, x=-0.05)
+
+    fig.legend(frameon=False, bbox_to_anchor=(0.525, 0.975), ncols=2, loc='lower center', fontsize=9)
 
     if savefig:
-        storage_pathname = os.path.join(storage_dirname, filename)
-        plt.savefig(storage_pathname, transparent=True, dpi=dpi, bbox_inches='tight')
+        storage_dirname = '/projects/GEOCLIM/gr7610/analysis/TC-AQP/figs'
+        figure_identifier = 'TC_distribution'
+        filename = f'{figure_identifier}.configuration_names.ALL.field_name.{distribution_parameter}.pdf'
+
+        if savefig:
+            storage_pathname = os.path.join(storage_dirname, filename)
+            plt.savefig(storage_pathname, transparent=True, dpi=dpi, format='pdf', bbox_inches='tight')
 
 def TC_tracks_raw(track_data: dict,
                   configuration_name: str,
@@ -690,12 +851,12 @@ def TC_tracks_raw(track_data: dict,
     # Get zonal mean distribution
     if projection == ccrs.PlateCarree(central_longitude=180):
         visualization.TC_density_histogram(ax=ax,
-                                        model_name=model_name,
-                                        experiment_names=experiment_name,
-                                        track_dataset=track_data_reconfigured,
-                                        bin_size=5,
-                                        axis_depth=histogram_axis_depth,
-                                        basin_name=None)
+                                           model_name=model_name,
+                                           experiment_names=experiment_name,
+                                           track_dataset=track_data_reconfigured,
+                                           bin_size=5,
+                                           axis_depth=histogram_axis_depth,
+                                           basin_name=None)
 
     # Plot colorbar if the scatter method is chosen
     if track_format == 'scatter':
@@ -708,6 +869,7 @@ def TC_track_density(track_data: dict,
                      bin_resolution: int=5,
                      output_unit: str='raw',
                      add_land: bool=False,
+                     savefig: bool=False,
                      diagnostic: bool=False):
 
     ''' Generate map of spatial frequency of TC occurrence. Provides a comparison option to compare two experiments. '''
@@ -723,11 +885,12 @@ def TC_track_density(track_data: dict,
         assert (len(experiment_names) == 2), 'Experiment names must be separated by a hyphen and not contain any hyphens.'
         assert (experiment_names[0] in track_data.keys()) & (experiment_names[1] in track_data.keys()), 'Experiment names must be in the track data.'
 
-        axis_width, axis_height = 6, 3
+        axis_width, axis_height = 5, 2.5
         height_ratios = (1, 0.05)
         hspace = 0 if add_land else 0.125
         wspace = 0.125
-        fig, gs = [plt.figure(figsize=(3 * axis_width, sum(axis_height * np.array(height_ratios) * (1 + hspace))), dpi=144, constrained_layout=True),
+        dpi = 300 if savefig else 144
+        fig, gs = [plt.figure(figsize=(3 * axis_width, sum(axis_height * np.array(height_ratios) * (1 + hspace))), dpi=dpi, constrained_layout=True),
                    matplotlib.gridspec.GridSpec(nrows=2, ncols=3, hspace=hspace, wspace=wspace, height_ratios=height_ratios)]
         axes = {}
 
@@ -780,6 +943,9 @@ def TC_track_density(track_data: dict,
         cax = cax_wrapper.inset_axes([0.25, -1, 0.5, 1])
         colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax, orientation='horizontal')
         colorbar.set_label('% of time with TC', labelpad=10)
+        # Format the tick formatting
+        number_of_cax_ticks = (len(norm.boundaries) - 1) // 2 + 1
+        cax.xaxis.set_major_locator(matplotlib.ticker.LinearLocator(number_of_cax_ticks))
 
         ''' Difference plot. '''
         
@@ -802,6 +968,9 @@ def TC_track_density(track_data: dict,
         cax.xaxis.set_major_locator(matplotlib.ticker.AutoLocator())
         colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax, orientation='horizontal')
         colorbar.set_label('$\Delta$ (% of time with TC) ', labelpad=10)
+        # Format the tick formatting
+        number_of_cax_ticks = (len(norm.boundaries) - 1) // 2 + 1
+        cax.xaxis.set_major_locator(matplotlib.ticker.LinearLocator(number_of_cax_ticks))
         
         # Perform common axis operations here
         histogram_colors = ['tab:blue', 'tab:green']
@@ -851,6 +1020,17 @@ def TC_track_density(track_data: dict,
             
         fig.tight_layout()
         
+        # Save the figure, is the option is chosen
+        if savefig:
+            # Define storage parameters
+            storage_model_name = [config_name.split('-')[0] for config_name in track_data.keys()][0]
+            storage_experiment_names = ':'.join([config_name.split('-')[1] for config_name in track_data.keys()])
+            storage_dirname = '/projects/GEOCLIM/gr7610/analysis/TC-AQP/figs'
+            storage_filename = f'track_TCs.configuration.{storage_model_name}-{storage_experiment_names}.pdf'
+            # Save the figure
+            plt.savefig(os.path.join(storage_dirname, storage_filename), dpi=dpi, bbox_inches='tight', format='pdf')
+    
+    
     else:
         
         for configuration_name in track_data.keys():
@@ -897,3 +1077,162 @@ def TC_track_density(track_data: dict,
             colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax)
             
             colorbar.set_label('% of time with TC per bin', rotation=270, labelpad=20)
+
+def plot_experiment_comparison_2D(configurations: dict,
+                                  field_names: str|list[str],
+                                  pressure_level: int=500,
+                                  data_type: str='atmos_month',
+                                  extrema: tuple[int|float, int|float]|None=None,
+                                  num_contour_levels: int=8,
+                                  rolling_degrees: int=10,
+                                  plot_method: str='pcolormesh',
+                                  add_land: bool=False,
+                                  show_stddev: bool=False):
+
+    datasets = {}
+    experiment_names = []
+    if isinstance(field_names, str): field_names = field_names
+    principal_field_name = field_names[0]
+    
+    # Iterate over configurations to load data
+    for configuration_name in configurations.keys():
+
+        model_name, experiment_name, npes = [configurations[configuration_name]['model_name'],
+                                             configurations[configuration_name]['experiment_name'],
+                                             configurations[configuration_name]['npes']]
+        experiment_names.append(experiment_name)
+
+        dirname = f'/scratch/gpfs/GEOCLIM/gr7610/tiger3/{model_name}/work/{experiment_name}_tiger3_intelmpi_24_{npes}PE/POSTP'
+        
+        pathnames = [f'{dirname}/{year:04d}0101.{data_type}.nc' for year in range(2, 125)]
+        pathnames = [pathname for pathname in pathnames if pathname.split('/')[-1] in os.listdir(dirname)]
+            
+        datasets[configuration_name] = xr.open_mfdataset(pathnames)
+        # Acquire derived values
+        datasets[configuration_name] = get_derived_fields(datasets[configuration_name])[principal_field_name]
+            
+        # Subselect vertical level, if one is chosen
+        if 'pfull' in datasets[configuration_name].dims:
+            datasets[configuration_name] = datasets[configuration_name].sel(pfull=pressure_level, method='nearest').load()
+        else:
+            datasets[configuration_name] = datasets[configuration_name].load()
+        
+    meridional_extent = slice(-90, 90)
+    factor = 86400 if principal_field_name in ['precip', 'evap', 'p-e', 'div_lq'] else 100 if principal_field_name == 'cld_amt' else -100 if principal_field_name == 'swfq' else 1
+    
+    # Obtain difference between control and perturbation
+    difference = (datasets['CTL'].mean('time') - datasets['EXP'].mean('time')).sel(grid_yt=meridional_extent) * factor
+
+    # Apply a smoothing Gaussian filter (sigma = 0.5)
+    sigma = 0.5
+    difference.data = scipy.ndimage.filters.gaussian_filter(difference, sigma=[sigma, sigma], mode='constant')
+
+    ''' Initialize the plot. '''
+
+    if add_land:
+        fig, ax = plt.subplots(figsize=(6, 3), dpi=144, 
+                               subplot_kw={'projection': ccrs.PlateCarree(central_longitude=180)})
+    else:
+        fig, ax = plt.subplots(figsize=(6, 3), dpi=144)
+
+    # Get field properties
+    long_name, units = visualization.field_properties(principal_field_name)
+    norm, cmap = visualization.norm_cmap(difference, field=principal_field_name, extrema=extrema, num_bounds=num_contour_levels)
+    if principal_field_name == 'swfq': cmap = visualization.cmap_white_adjust(cmap)
+
+    ''' Planar time-mean plot. '''
+    if plot_method == 'contour':
+        im = ax.contourf(difference.grid_xt, difference.grid_yt, difference, norm=norm, cmap=cmap, levels=len(norm.boundaries), transform=transform)
+    else:
+        if add_land:
+            im = ax.pcolormesh(difference.grid_xt, difference.grid_yt, difference, norm=norm, cmap=cmap, alpha=0.875, zorder=6, transform=ccrs.PlateCarree())
+        else:
+            im = ax.pcolormesh(difference.grid_xt, difference.grid_yt, difference, norm=norm, cmap=cmap, zorder=6)
+
+    # Superimpose a contour showing the extent of TC activity exceeding a given threshold
+    model_name_CTL = configurations['CTL']['model_name'] # use control model name
+    experiment_name_CTL = configurations['CTL']['experiment_name'] # use experiment model name
+    year_range_CTL = (datasets['CTL'].time.min().dt.year.item(), datasets['CTL'].time.max().dt.year.item())
+    
+    visualization.superimpose_TC_contour(model_name=model_name_CTL,
+                                         experiment_name=experiment_name_CTL,
+                                         year_range=year_range_CTL,
+                                         ax=ax,
+                                         projection=ccrs.PlateCarree())
+    
+    # Add geographic features
+    if add_land: 
+        ax.add_feature(cartopy.feature.LAND, fc='k', zorder=5)
+        ax.coastlines(zorder=7)
+
+    # Add guidelines
+    ax.axhline(0, c='k', lw=0.5, zorder=9)
+
+    # Add gridlines
+    gridline_xticks = np.arange(-180, 180, 45)
+    gridline_yticks = np.arange(-90, 90 + 30, 30)
+    gridlines = ax.gridlines(draw_labels=False, 
+                             xlocs=gridline_yticks, 
+                             ylocs=gridline_yticks, 
+                             ls='--', 
+                             crs=ccrs.PlateCarree(), 
+                             zorder=8)
+    
+    # Format axis bounds and labeling
+    longitude_tick_formatter = matplotlib.ticker.FuncFormatter(lambda x, pos: x + 180)
+    ax.set_xticks(gridline_xticks)
+    ax.set_yticks(gridline_yticks)
+    if add_land:
+        ax.set_ylim([-60, 60])
+    else:
+        ax.set_ylim([-90 + rolling_degrees, 90 - rolling_degrees])
+    ax.xaxis.set_major_formatter(longitude_tick_formatter)
+    
+    ax.set_xlabel('Longitude')
+    ax.set_ylabel('Latitude')
+
+    # Annotations    
+    title_string = f'{model_name_CTL}, CTL — SWISHE, {long_name}'
+    axis_title = ax.set_title(title_string, ha='left', loc='left', fontsize=10)
+
+    difference_global_mean = difference.weighted(np.cos(np.deg2rad(difference.grid_yt))).mean()
+    statistics_annotation_text = f'{difference_global_mean:.2f} ({difference.min():.2f}, {difference.max():.2f})'
+    statistics_annotation = ax.annotate(statistics_annotation_text, xy=(1, 1.05), xycoords='axes fraction', 
+                                        ha='right', va='baseline', fontsize=9, zorder=99)
+    
+    # Ensure the axis spines stay above all other elements
+    for k, spine in ax.spines.items():
+        spine.set_zorder(999)
+
+    ########################################################################################################################
+
+    ''' Zonal mean subplot. '''
+    zonal_mean_ax = ax.inset_axes([1, 0, 0.1, 1])
+    
+    # Reference lines
+    zonal_mean_ax.axhline(0, c='k', lw=1, zorder=9)
+    if difference.mean('grid_xt').min() < 0 and difference.mean('grid_xt').max() > 0:
+        zonal_mean_ax.axvline(0, c='k', lw=1)
+
+    zonal_mean, zonal_std = [(difference * np.cos(np.deg2rad(difference.grid_yt))).mean('grid_xt'),
+                             (difference * np.cos(np.deg2rad(difference.grid_yt))).std('grid_xt')]
+    zonal_mean, zonal_std = [zonal_mean.rolling(grid_yt=rolling_degrees*2, center=True).mean('grid_yt'), 
+                             zonal_std.rolling(grid_yt=rolling_degrees*2, center=True).mean('grid_yt')]
+
+    if show_stddev:
+        zonal_mean_ax.fill_betweenx(zonal_mean.grid_yt,
+                                    x1=zonal_mean-zonal_std,
+                                    x2=zonal_mean+zonal_std,
+                                    alpha=0.125)
+    zonal_mean_ax.plot(zonal_mean, zonal_mean.grid_yt, zorder=11, c='k', lw=1.5)
+    
+    zonal_mean_ax.set_yticks(ax.get_yticks(), [])
+    zonal_mean_ax.set_ylim(ax.get_ylim())
+    
+    # Colorbar
+    cax = ax.inset_axes([1.125, 0, 0.025, 1])
+    colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), cax=cax)
+    colorbar.set_label(units, rotation=270, labelpad=15)
+
+
+    return difference

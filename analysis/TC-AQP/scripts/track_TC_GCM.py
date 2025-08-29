@@ -273,21 +273,19 @@ def get_storm_coordinates(storm_track_data: pd.DataFrame,
 
     return storm_track_coordinates
 
-def load_GCM_data(storm_gcm_pathnames, 
-                  storm_track_timestamps,
-                  storm_track_coordinates) -> (xr.Dataset, ):
+def load_GCM_data(storm_gcm_pathnames: list[str], 
+                  storm_track_timestamps: list,
+                  storm_track_coordinates: dict,
+                  field_names: list[str]|None=['cld_amt', 'sphum'],
+                  pressure_level: int|None=200) -> (xr.Dataset, list):
 
     ''' Load and trim the data in time and space. '''
-    
+
     # Load the data.
     storm_gcm_data = xr.open_mfdataset(storm_gcm_pathnames)
-    
-    # # Address issue with TCs that have calendar year < 100
-    # num_shift_days = min([(pd.Timedelta(days=int(np.floor(t.year / 4)))) for t in storm_gcm_data.time.values])
-    # print(f'Shifting days on the time axis by: {num_shift_days} days')
-    
-    # storm_gcm_data = storm_gcm_data.assign_coords({'time': [(t - pd.Timedelta(days=int(np.floor(t.year / 4)))) 
-    #                                                         for t in storm_gcm_data.time.values if t.year < 100]}).drop_duplicates('time')
+
+    # Check if data has a vertical dimension. If so, trim by field names and pressure level.
+    storm_gcm_data = storm_gcm_data[field_names].sel(pfull=pressure_level, method='nearest') if 'pfull' in storm_gcm_data.dims else storm_gcm_data
     
     # Obtain timestamps shared by GCM data and track timestamps.
     storm_gcm_timestamps = list(set(storm_track_timestamps) & set(storm_gcm_data['time'].values))
@@ -395,7 +393,7 @@ def storm_generator(model_name: str,
 
     ''' Method to perform all steps related to binding corresponding GFDL QuickTracks and GCM model output together for a given TC. '''
 
-    print(f'[storm_generator] Processing storm ID {storm_ID}...')
+    print(f'[storm_generator] Processing storm ID {storm_ID} with data type {GCM_data_type}...')
     
     # 3. Find a candidate storm from the track data
     storm_track_data = pick_storm(track_data, selection_method='storm_number', storm_ID=storm_ID)
@@ -415,11 +413,12 @@ def storm_generator(model_name: str,
         # 9. Append information from `track data` to netCDF object containing GCM output
         storm_gcm_data = join_track_GCM_data(storm_track_data, storm_gcm_data)
         # 10. Save xArray Dataset to netCDF file
-        save_storm_netcdf(model_name=model_name, experiment_name=experiment_name, storm_gcm_data=storm_gcm_data, storage_dirname=storage_dirname)
+        save_storm_netcdf(model_name=model_name, experiment_name=experiment_name, storm_gcm_data=storm_gcm_data, GCM_data_type=GCM_data_type, storage_dirname=storage_dirname)
         
 def save_storm_netcdf(model_name: str,
                       experiment_name: str, 
                       storm_gcm_data: xr.Dataset,
+                      GCM_data_type: str,
                       storage_dirname: str|None,
                       overwrite: bool=False):
     
@@ -435,11 +434,12 @@ def save_storm_netcdf(model_name: str,
     # Obtain the basin name for the storm filename
     storm_basin = get_storm_basin_name(storm_gcm_data)
     # Build storm filename
-    storm_filename = f'TC.model-{model_name}.experiment-{experiment_name}.storm_ID-{storm_ID}.max_wind-{max_wind}.min_slp-{min_slp}.basin-{storm_basin}.nc'
+    storm_data_type_str = f'.frequency-{GCM_data_type.split('_')[-1]}' if GCM_data_type != 'atmos_4xdaily' else ''
+    storm_filename = f'TC.model-{model_name}.experiment-{experiment_name}.storm_ID-{storm_ID}.max_wind-{max_wind}.min_slp-{min_slp}.basin-{storm_basin}{storm_data_type_str}.nc'
     storm_pathname = os.path.join(storage_dirname, storm_filename)
     
     # Load the data into memory before saving to ensure output is fully there
-    print(f'[save_storm_netcdf] Loading data for {storm_filename}')
+    print(f'[save_storm_netcdf] Loading data for {storm_filename} using data type {GCM_data_type}')
 
     # Profile loading time
     start_time = time.time()

@@ -8,10 +8,45 @@ import xarray as xr
 sys.path.insert(1, '/projects/GEOCLIM/gr7610/scripts')
 import visualization
 
+def get_composite_latitude_distribution(configuration_data: dict,
+                                        maximum_latitude: int=90,
+                                        savefig: bool=False):
+
+    ''' Method to get meridional distribution of TC snapshots used for compositing. '''
+
+    # Initialize the figure
+    dpi = 300 if savefig else 144
+    dist_fig, dist_ax = plt.subplots(figsize=(6, 2.5), dpi=dpi)
+
+    for config_index, config_name in enumerate(configuration_data.keys()):
+        # Prep inputs for the modular TC-GCM compositing function
+        entries_TC = configuration_data[config_name]['TC']
+        entries_GCM = configuration_data[config_name]['GCM']
+        # Get latitudes of the configuration snapshots
+        snapshot_latitudes = entries_TC['center_lat'].where(abs(entries_TC['center_lat']) <= maximum_latitude, np.nan).values
+
+        dist_ax.hist(snapshot_latitudes, bins=np.arange(-90, 90, 2.5), histtype='step', label=config_name)
+    
+    dist_ax.set_xlabel('Latitude')
+    dist_ax.set_ylabel('Count')
+    dist_ax.legend(frameon=False)
+
+    # Save the figure, is the option is chosen
+    if savefig:
+        # Define storage parameters
+        storage_model_name = [config_name.split(':')[0] for config_name in configuration_data.keys()][0]
+        storage_experiment_names = ':'.join([config_name.split(':')[1].split('.')[1] for config_name in configuration_data.keys()])
+        storage_dirname = '/projects/GEOCLIM/gr7610/analysis/TC-AQP/figs'
+        storage_filename = f'TC-GCM.meridional_distribution.{storage_model_name}-{storage_experiment_names}.pdf'
+        # Save the figure
+        plt.savefig(os.path.join(storage_dirname, storage_filename), dpi=dpi, bbox_inches='tight', format='pdf')
+
+    
 def multiplot_TC_GCM_composite(configuration_data: dict,
                                field_name: str,
                                contour_levels: int=12,
                                maximum_latitude: int=30,
+                               plotting_method: str='pcolormesh',
                                savefig: bool=False):
 
     ''' 
@@ -57,25 +92,32 @@ def multiplot_TC_GCM_composite(configuration_data: dict,
                               field_name=field_name,
                               contour_levels=contour_levels,
                               maximum_latitude=maximum_latitude,
+                              plotting_method=plotting_method,
                               fig=fig,
                               gs=gs,
                               ax_index=config_index)
 
     # Add figure labels
     long_name, units = visualization.field_properties(field_name)
-    fig.supxlabel('degrees from TC center')
-    fig.supylabel(f'{long_name} [{units}]', fontsize=10) # left-hand y-label
+    fig.supxlabel('degrees from TC center', y=0.05)
+    fig.supylabel(f'{long_name} [{units}]', fontsize=11) # left-hand y-label
     fig.text(0.95, 0.5, f'$\delta$ (TC — GCM) [{units}]', ha='center', va='center', rotation=270, fontsize=10) # right-hand y-label
 
     # Save the figure, is the option is chosen
     if savefig:
         # Define storage parameters
         storage_model_name = [config_name.split(':')[0] for config_name in configuration_data.keys()][0]
-        storage_experiment_names = ':'.join([config_name.split(':')[1] for config_name in configuration_data.keys()])
+        storage_experiment_names = ':'.join([config_name.split(':')[1].split('.')[1] for config_name in configuration_data.keys()])
         storage_dirname = '/projects/GEOCLIM/gr7610/analysis/TC-AQP/figs'
         storage_filename = f'TC-GCM.configuration.{storage_model_name}-{storage_experiment_names}.field_name.{field_name}.pdf'
         # Save the figure
         plt.savefig(os.path.join(storage_dirname, storage_filename), dpi=dpi, bbox_inches='tight', format='pdf')
+
+    # Plot the meridional distribution of snapshots used for compositing
+    get_composite_latitude_distribution(configuration_data=configuration_data,
+                                        maximum_latitude=maximum_latitude,
+                                        savefig=savefig)
+
 
 def plot_TC_GCM_composite(entries_TC: xr.Dataset,
                           entries_GCM: xr.Dataset,
@@ -84,6 +126,7 @@ def plot_TC_GCM_composite(entries_TC: xr.Dataset,
                           field_name: str,
                           contour_levels: int=12,
                           maximum_latitude: int=30,
+                          plotting_method: str='pcolormesh',
                           fig: matplotlib.figure.Figure|None=None,
                           gs: matplotlib.gridspec.GridSpec|None=None,
                           ax_index: int|None=None):
@@ -130,10 +173,12 @@ def plot_TC_GCM_composite(entries_TC: xr.Dataset,
                                                                num_bounds=contour_levels) # for TC and GCM
     
     # Define normalization parameters for difference experiment
+    colormap_override = False # lazy flag to use to prevent confusing sequential colormaps from being used
     if field_name in ['netrad_toa']: 
         # Override difference extrema for net radiation to ensure centered extrema about zero
         extremum = max([abs(config_extrema['TC—GCM']['min']), abs(config_extrema['TC—GCM']['max'])]) 
         extrema = (-extremum, extremum)
+        colormap_override = True # ensure a diverging colormap for a field with typically-divergent values
     else:
         extrema = (config_extrema['TC—GCM']['min'], config_extrema['TC—GCM']['max'])
 
@@ -150,11 +195,15 @@ def plot_TC_GCM_composite(entries_TC: xr.Dataset,
         ax = fig.add_subplot(gs[row_index, col_index + 1])
     
         # Define normalization and colormap based on configuration type
-        norm = difference_norm if config_key == 'TC—GCM' else experiment_norm
-        cmap = difference_cmap if config_key == 'TC—GCM' else experiment_cmap
+        norm = difference_norm if (config_key == 'TC—GCM' or colormap_override) else experiment_norm
+        cmap = difference_cmap if (config_key == 'TC—GCM' or colormap_override) else experiment_cmap
         
         # Plot the composite mean
-        ims[config_key] = ax.pcolormesh(config_means[config_key].grid_xt_TC, config_means[config_key].grid_yt_TC, config_means[config_key], norm=norm, cmap=cmap)
+        if plotting_method == 'contour':
+            ims[config_key] = ax.contourf(config_means[config_key].grid_xt_TC, config_means[config_key].grid_yt_TC, config_means[config_key], norm=norm, cmap=cmap, levels=contour_levels)
+        else:
+            ims[config_key] = ax.pcolormesh(config_means[config_key].grid_xt_TC, config_means[config_key].grid_yt_TC, config_means[config_key], norm=norm, cmap=cmap, linewidth=0, rasterized=True)
+
     
         # Plot metadata
         if row_index == 0: ax.set_title(f'{model_name}, {config_key}', fontsize=10)
@@ -163,8 +212,10 @@ def plot_TC_GCM_composite(entries_TC: xr.Dataset,
         ax.set_aspect('equal')
     
         # Plot subfigure letter
-        subplot_figure_index = row_index * (gs.ncols - 2) + col_index # calculate iterand subfigure index, subtract 2 for colorbars
-        subplot_figure_letter = visualization.get_alphabet_letter(subplot_figure_index) # get subfigugre letter
+        subplot_letter_factor = 1 if model_name == 'HIRAM' else 0
+        subplot_figure_index = row_index * (gs.ncols - 2) + col_index + gs.nrows * (gs.ncols - 2) * subplot_letter_factor # calculate iterand subfigure index, subtract 2 for colorbars
+        
+        subplot_figure_letter = visualization.get_alphabet_letter(subplot_figure_index) # get subfigure letter
         letter_annotation = ax.annotate(f'({subplot_figure_letter}) {experiment_name.split('.')[1]}', xy=(0.03, 0.96), xycoords='axes fraction', 
                                         ha='left', va='top', fontsize=9)
         letter_annotation.set_path_effects([matplotlib.patheffects.Stroke(linewidth=2, foreground=(1, 1, 1, 0.75)),
@@ -183,8 +234,8 @@ def plot_TC_GCM_composite(entries_TC: xr.Dataset,
         # Define colorbar axis parameters based on configuration type
         cax_column = -1 if config_key == 'TC—GCM' else 0
         # Define normalization and colormap based on configuration type
-        norm = difference_norm if config_key == 'TC—GCM' else experiment_norm
-        cmap = difference_cmap if config_key == 'TC—GCM' else experiment_cmap
+        norm = difference_norm if (config_key == 'TC—GCM' or colormap_override) else experiment_norm
+        cmap = difference_cmap if (config_key == 'TC—GCM' or colormap_override) else experiment_cmap
 
         # Initialize the colorbar axis
         colorbar_ax = fig.add_subplot(gs[row_index, cax_column]) 
@@ -192,7 +243,7 @@ def plot_TC_GCM_composite(entries_TC: xr.Dataset,
         cax = colorbar_ax.inset_axes([0, 0, 0.25, 1])
         # Plot the colorbar
         colorbar = fig.colorbar(matplotlib.cm.ScalarMappable(norm, cmap), 
-                                cax=cax)
+                                cax=cax, extend='both')
         # Format the tick formatting
         number_of_cax_ticks = (len(norm.boundaries) - 1) // 4 + 1
         cax.yaxis.set_major_locator(matplotlib.ticker.LinearLocator(number_of_cax_ticks))

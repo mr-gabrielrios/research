@@ -865,20 +865,20 @@ def save_composites(composite_TC_samples: dict,
 
     print(f'Saving composite data to {pathname}...')
 
-    composite_TC_samples.to_dataset(name=field_name).to_netcdf(pathname)
-    # if os.path.exists(pathname):
-    #     override = input(
-    #         'File already exists - do you wish to override? [y/n]\n')
-    #     if 'y' in override:
-    #         os.remove(pathname)
-    #         composite_TC_samples.to_dataset(
-    #             name=field_name).to_netcdf(pathname)
-    #     else:
-    #         import sys
-    #         print(f'File at {pathname} not overridden. Exiting...')
-    #         sys.exit()
-    # else:
-    #     composite_TC_samples.to_dataset(name=field_name).to_netcdf(pathname)
+    if os.path.exists(pathname):
+        # override = input(
+        #     'File already exists - do you wish to override? [y/n]\n')
+        override = 'y'
+        if 'y' in override:
+            os.remove(pathname)
+            composite_TC_samples.to_dataset(
+                name=field_name).to_netcdf(pathname)
+        else:
+            import sys
+            print(f'File at {pathname} not overridden. Exiting...')
+            sys.exit()
+    else:
+        composite_TC_samples.to_dataset(name=field_name).to_netcdf(pathname)
 
 
 def main(configuration_name: str,

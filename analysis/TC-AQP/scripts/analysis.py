@@ -57,7 +57,8 @@ def define_GCM_fields(fields: list[str]) -> dict:
     
     return field_dictionaries
 
-def load_TC_track_data(experiment_configurations: dict[str: tuple[int, int]]) -> dict:
+def load_TC_track_data(experiment_configurations: dict[str: tuple[int, int]],
+                       diagnostic: bool=False) -> dict:
 
     ''' 
     Loads TC track data for GCM experiments for a given model.
@@ -73,6 +74,8 @@ def load_TC_track_data(experiment_configurations: dict[str: tuple[int, int]]) ->
     2b. Else, manually load the track data 
     '''
 
+    diagnostic_tag = f'[load_TC_track_data()]'
+
     # Ensure data types are appropriate. Convert to list if a string.
     assert isinstance(experiment_configurations, dict), "`experiment_names` must be a dictionary."
         
@@ -80,7 +83,7 @@ def load_TC_track_data(experiment_configurations: dict[str: tuple[int, int]]) ->
     directories = {}
     for experiment_configuration in experiment_configurations.keys():
         # Get configuration details
-        model_name, experiment_name = experiment_configuration.split('-')
+        model_name, experiment_name = experiment_configuration.split('-') if '-' in experiment_configuration else (experiment_configuration, '')
         # Get configuration-specific directory
         experiment_dirname = utilities.directories(model=model_name, experiment=experiment_name, data_type='track_data') 
         if experiment_dirname is not None:
@@ -90,7 +93,7 @@ def load_TC_track_data(experiment_configurations: dict[str: tuple[int, int]]) ->
     track_data = {}
     for experiment_configuration, year_range in experiment_configurations.items():
         # Get configuration details
-        model_name, experiment_name = experiment_configuration.split('-')
+        model_name, experiment_name = experiment_configuration.split('-') if '-' in experiment_configuration else (experiment_configuration, '')
         # Check to see if data is pre-loaded
         temporary_track_data = tc_analysis.load_TC_tracks(model=model_name,
                                                           experiment=experiment_name,
@@ -98,11 +101,11 @@ def load_TC_track_data(experiment_configurations: dict[str: tuple[int, int]]) ->
                                                           print_statistics=False)
         # If so, append to the dictionary
         if temporary_track_data is not None:
-            print('Preloaded data being used...')
+            if diagnostic: print(f'{diagnostic_tag} Preloaded data being used...')
             track_data[experiment_configuration] = temporary_track_data[model_name][experiment_name]
         # Else, load manually
         else:
-            print('Data must be generated to be used...')
+            if diagnostic:  print('Data must be generated to be used...')
             # Get year range available (must be continuous)
             available_track_years = [int(subdir.split('_')[-1]) for subdir in os.listdir(directories[experiment_name])
                                      if 'atmos_' in subdir]
@@ -118,9 +121,10 @@ def load_TC_track_data(experiment_configurations: dict[str: tuple[int, int]]) ->
 
         TMP = track_data[experiment_configuration]['unique']
         num_years = np.round((TMP['time'].max() -TMP['time'].min()).days / 365)
-        print(f'Number of storms per year, experiment {experiment_name}: {(len(TMP) / num_years):.2f}')
-        print('#######################################################')
-    
+        if diagnostic:
+            print(f'{diagnostic_tag} Number of storms per year, experiment {experiment_name}: {(len(TMP) / num_years):.2f}')
+            print('\t#######################################################')
+        
     return track_data
 
 def load_GCM_data(model_name: str,
@@ -215,3 +219,97 @@ def unit_conversion(data: dict):
                 if field_name in ['precip', 'evap']:
                     data[model_name][experiment_name][field_name] = data[model_name][experiment_name][field_name] * 86400
     return data
+
+def get_TC_statistics(configurations: dict, 
+                      diagnostic: bool=False) -> dict:
+
+    diagnostic_tag = f'[get_TC_statistics()]'
+    # Configuration name format is '{MODEL_NAME}-{EXPERIMENT_NAME}.{CONFIGURATION_TYPE}'
+
+    # Working and output dictionary for statistics
+    statistics_TMP, statistics_TC = {}, {}
+    
+    # Load track data for all configurations
+    config_track_data = load_TC_track_data(experiment_configurations=configurations)
+
+    # First pass: construct the custom dictionary
+    for config_name in config_track_data.keys():
+        if diagnostic: print(f'{diagnostic_tag} working on configuration {config_name}...')
+        if 'IBTrACS' in config_name: continue # we don't need to process IBTrACS data in this function
+        # Pull configuration-specific metadata
+        model_name = config_name.split('-')[0] # get model name
+        experiment_type, config_type = config_name.split('-')[1].split('.') # get experiment and configuration names
+        statistics_TMP[f'{model_name}-{config_type}'] = {'CTL': None, 'EXP': None}
+        statistics_TC[f'{model_name}-{config_type}'] = {'CTL': {}, 'EXP': {}}
+
+    # Second pass: scrape unique TC track data for all configurations and place into a custom data structure for control-perturbation comparison
+    for config_name in config_track_data.keys():
+        if 'IBTrACS' in config_name: continue # we don't need to process IBTrACS data in this function
+        # Pull configuration-specific metadata
+        model_name = config_name.split('-')[0] # get model name
+        experiment_type, config_type = config_name.split('-')[1].split('.') # get experiment and configuration names
+
+        # Assign configuration type as a binary of either control or SWISHE
+        assert experiment_type in ['CTL1990', 'CTL1990_SWISHE'], f'Experiment type is currently restricted to two entries: `CTL1990` and `CTL1990_SWISHE`. Please check this configuration, {experiment_type}.'
+        experiment_type = 'CTL' if experiment_type == 'CTL1990' else 'EXP'
+
+        # Assign dictionary 
+        statistics_TMP[f'{model_name}-{config_type}'][experiment_type] = config_track_data[config_name]['unique']
+
+    # Third pass: get statistics for TC activity for all configurations
+    for config_name in statistics_TMP.keys():
+        if 'IBTrACS' in config_name: continue # we don't need to process IBTrACS data in this function
+        # Get model and configuration names
+        model_name, config_type = config_name.split('-')
+        # Iterate over each expeirment type to get statistics
+        for experiment_type in statistics_TMP[config_name]:
+            if diagnostic: print(f'{diagnostic_tag} Parsing statistics on the {experiment_type} experiment for configuration {config_name}...')
+
+            TMP = statistics_TMP[config_name][experiment_type] # define a shorthand for the iterand configuration data
+            TMP_HU = TMP.loc[TMP['max_wind'] >= 33] # filter for hurricane-strength TCs
+            number_of_years = np.round((TMP['cftime'].max() - TMP['cftime'].min()).days / 365).astype(int) # number of years
+
+            # Load statistics of interest into the dictionary
+            statistics_TC[f'{model_name}-{config_type}'][experiment_type]['NUM_YR'] = number_of_years
+            statistics_TC[f'{model_name}-{config_type}'][experiment_type]['COUNT_TS'] = TMP['storm_id'].count()
+            statistics_TC[f'{model_name}-{config_type}'][experiment_type]['COUNT_PER_YR_TS'] = TMP['storm_id'].count() / number_of_years
+            statistics_TC[f'{model_name}-{config_type}'][experiment_type]['MEDIAN_SLP_TS'] = TMP['min_slp'].median()
+            statistics_TC[f'{model_name}-{config_type}'][experiment_type]['COUNT_HU'] = TMP_HU['storm_id'].count()
+            statistics_TC[f'{model_name}-{config_type}'][experiment_type]['COUNT_PER_YR_HU'] = TMP_HU['storm_id'].count() / number_of_years
+            statistics_TC[f'{model_name}-{config_type}'][experiment_type]['MEDIAN_SLP_HU'] = TMP_HU['min_slp'].median()
+            
+    # Fourth pass: get differences between control and perturbations
+    for config_name in statistics_TC.keys():
+        # Get model and configuration names
+        model_name, config_type = config_name.split('-')
+        # Get experiment types
+        experiment_types = list(statistics_TC[f'{model_name}-{config_type}'].keys())
+        assert len(experiment_types) == 2
+
+        # Generate the difference experiment type
+        statistics_TC[f'{model_name}-{config_type}']['CTL-EXP'] = {}
+        # Get statistics differences between control and perturbations
+        for statistic in statistics_TC[f'{model_name}-{config_type}'][experiment_types[0]]:
+            get_percent_difference = lambda x, y: 100 * ((x - y) / y)
+            if statistic in ['NUM_YR']: continue # skip over useless statistics to compare
+            statistics_TC[f'{model_name}-{config_type}']['CTL-EXP'][statistic] = get_percent_difference(statistics_TC[f'{model_name}-{config_type}']['EXP'][statistic], statistics_TC[f'{model_name}-{config_type}']['CTL'][statistic])
+
+    # Re-organize dictionary for re-assignment as a DataFrame
+    statistics_TC_nested = {(config_name, experiment_name): TMP_EXP 
+                            for config_name, TMP_CONFIG in statistics_TC.items() # outer loop
+                            for experiment_name, TMP_EXP in TMP_CONFIG.items()} # inner loop
+    # Generate a DataFrame, sort indices,a nd round to two decimal places
+    statistics_TC = pd.DataFrame.from_dict(statistics_TC_nested, orient='index').sort_index().round(2)
+
+    # Perform reindexing for legibility
+    # Step 1: get level 0 (configuration type) order to match input experiment order
+    get_config_name = lambda x: '-'.join([x.split('-')[0], x.split('-')[1].split('.')[1]])
+    configuration_type_list = [get_config_name(k) for k in configurations.keys() if 'IBTrACS' not in k]
+    configuration_type_dict = {k: index for index, k in enumerate(configuration_type_list)}
+    configuration_type_list = list(configuration_type_dict.keys())
+    # Step 2: get level 1 (experiment type) order
+    experiment_type_list = ['CTL', 'EXP', 'CTL-EXP']
+    # Step 3: reorder accordingly
+    statistics_TC = statistics_TC.reindex(index=configuration_type_list, level=0).reindex(index=experiment_type_list, level=1)
+
+    return statistics_TC
