@@ -224,7 +224,7 @@ def get_experiment(field_names: str|list[str],
     pathnames = [f'{dirname}/{year:04d}0101.{data_type}.nc' for year in range(min_year, max_year)]
     pathnames = [pathname for pathname in pathnames if pathname.split('/')[-1] in os.listdir(dirname)]
     # Hack: only get last N entries if the field names are used for overturning circulations
-    pathnames = pathnames[-4:] if ('ucomp' in field_names) or ('vcomp' in field_names) else pathnames
+    pathnames = pathnames[-6:] if ('ucomp' in field_names) or ('vcomp' in field_names) else pathnames
 
     if diagnostic: print(f'{diagnostic_tag} evaluating configuration name {configuration_name} with pathname {pathnames}')
     # Pull data

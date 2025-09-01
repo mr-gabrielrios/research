@@ -103,72 +103,109 @@ def plot_overturning_circulation(datasets: dict,
     return im
 
 def multiplot_overturning_circulation(data: dict,
-                                      configuration_names: list[str],
-                                      psi_magnitude: int|float,
-                                      colormap_name: str='viridis'):
+                                      configuration_names: dict[list[str]],
+                                      psi_magnitudes: dict[str: int|float],
+                                      colormap_name: str='viridis',
+                                      diagnostic: bool=False):
+
+    diagnostic_tag = f'[multiplot_overturning_circulation()]'
 
     ''' Method to generate multiple overlaid plots of overturning circulation. '''
 
     # Define colors to use for different configurations
-    contour_colors = visualization.get_colormap_samples(number_of_samples=len(configuration_names),
-                                                        colormap_name=colormap_name,
-                                                        interval_minimum=0.3, 
-                                                        interval_maximum=0.7)
 
+    
     ''' Initialize plot. '''
-    
-    fig, ax = plt.subplots(figsize=(5, 2.5), dpi=144)
-    
-    # Reference equatorial line
-    ax.axvline(0, c='k', lw=0.5)    
-    # Initialize catalog to store plot data. This will be used for generating a legend.
-    ims = {}
+
+    ncols = 2
+    nrows = np.ceil(len(configuration_names) / ncols).astype(int)
+    ax_width, ax_height = 4, 2
+    dpi = 144
+    fig, gs = [plt.figure(figsize=(ax_width * ncols, ax_height * nrows), dpi=dpi),
+               matplotlib.gridspec.GridSpec(nrows=nrows, ncols=ncols)]
+
+
     # Iterate over the selected configurations
-    for index, config in enumerate(configuration_names):
-    
-        # Plot the negative streamfunction (southward transport)
-        ims[config] = plot_overturning_circulation(datasets=data,
-                                                   configuration_name=config,
-                                                   single_level=-psi_magnitude,
-                                                   single_level_color=contour_colors[index],
-                                                   extrema=None,
-                                                   ax=ax)  
+    for index, config_name in enumerate(configuration_names):
+                             
+        nrow = index // ncols
+        ncol = index - nrow * ncols
+        subconfig_names = configuration_names[config_name]
+        if diagnostic: print(f'Figure index: {index}; row: {nrow}, column: {ncol}, {subconfig_names}')
+
+        # Initialize catalog to store plot data. This will be used for generating a legend.
+        ims = {}
+
+        ax = fig.add_subplot(gs[nrow, ncol])
+        for subindex, subconfig_name in enumerate(subconfig_names):
+
+            colormap_name = 'viridis' if ':CTL' in subconfig_name else 'bone'
+            contour_colors = visualization.get_colormap_samples(number_of_samples=2,
+                                                               colormap_name=colormap_name,
+                                                               interval_minimum=0.25, 
+                                                               interval_maximum=0.75)
+
+            psi_magnitude = psi_magnitudes['CTL'] if ':CTL' in subconfig_name else psi_magnitudes['DIFF']
+
+            if diagnostic:  print(f'\tPlotting subconfiguration: {subconfig_name}...')
+
+            # Get configuration properties and make sure configuration names conform to structure and filter rules
+            assert len(subconfig_name.split(':')) == 3, 'Revisit configuration name definitions such that the configuration is of form {model_name}:{experiment_name}:{experiment_type}.'
+                        
+            # Determine configuration-specific model and experiment name
+            subconfig_model_name, subconfig_experiment_name = [subconfig_name.split(':')[0],
+            subconfig_name.split(':')[1]]
         
-        # Plot the positive streamfunction (southward transport)
-        plot_overturning_circulation(datasets=data,
-                                     configuration_name=config,
-                                     single_level=psi_magnitude,
-                                     single_level_color=contour_colors[index],
-                                     extrema=None,
-                                     ax=ax)
+            # Plot the negative streamfunction (southward transport)
+            ims[subconfig_name] = plot_overturning_circulation(datasets=data,
+                                                               configuration_name=subconfig_name,
+                                                               single_level=-psi_magnitude,
+                                                               single_level_color=contour_colors[subindex],
+                                                               extrema=None,
+                                                               ax=ax)  
+            
+            # Plot the positive streamfunction (southward transport)
+            plot_overturning_circulation(datasets=data,
+                                        configuration_name=subconfig_name,
+                                        single_level=psi_magnitude,
+                                        single_level_color=contour_colors[subindex],
+                                        extrema=None,
+                                        ax=ax)
 
-        # Plot TC density histogram
-        get_density_difference = True if 'DIFF' in config else False
-        model_name, experiment_names = [config.split(':')[0],
-                                        (f'CTL1990.{config.split(':')[1]}', f'CTL1990_SWISHE.{config.split(':')[1]}')]
-        experiment_names = experiment_names if 'DIFF' in config else experiment_names[0] # only use control experiment for non-difference plots
-        zonal_mean.get_TC_track_histogram(ax=ax, 
-                                          model_name=model_name, 
-                                          experiment_names=experiment_names, 
-                                          get_density_difference=get_density_difference, 
-                                          colors=[contour_colors[index]],
-                                          orientation='vertical',
-                                          override_difference_colors=True)
+            # Plot TC density histogram
+            get_density_difference = True if 'DIFF' in subconfig_name else False
+            model_name, experiment_names = [subconfig_name.split(':')[0],
+                                            (f'CTL1990.{subconfig_name.split(':')[1]}', f'CTL1990_SWISHE.{subconfig_name.split(':')[1]}')]
+            experiment_names = experiment_names if 'DIFF' in subconfig_name else experiment_names[0] # only use control experiment for non-difference plots
+            zonal_mean.get_TC_track_histogram(ax=ax, 
+                                              model_name=model_name, 
+                                              experiment_names=experiment_names, 
+                                              get_density_difference=get_density_difference, 
+                                              colors=[contour_colors[subindex]],
+                                              orientation='vertical',
+                                              override_difference_colors=True)
 
-    ''' Figure metadata. '''
-    # Plot ticks and limits
-    ax.set_yticks([200, 500, 700, 850, 1000])
-    ax.set_xlim([-90, 90])
-    ax.set_ylim(ax.get_ylim()[::-1])
-    # Plot labeling
-    ax.set_xlabel('Latitude [deg N]')
-    ax.set_ylabel('Pressure level [hPa]')
-    ax.set_title(f'Meridional overturning streamfunction, $\psi = \pm${psi_magnitude:.0e} kg s$^{{-1}}$', 
-                 fontsize=10, loc='left', ha='left')
+            # Generate custom legend
+            if nrow == 0: 
+                handles = [matplotlib.lines.Line2D([0], [0], color=im.colors, lw=2) for im in ims.values()]
+                labels = [config_name.split(':')[0] for config_name in ims.keys()]
+                ax.legend(handles=handles, labels=labels, loc='upper right', frameon=False, fontsize=9)
+
+        ''' Subplot metadata. '''
+        # Plot ticks and limits
+        ax.xaxis.set_major_locator(matplotlib.ticker.AutoLocator())
+        ax.xaxis.set_minor_locator(matplotlib.ticker.AutoMinorLocator())
+        ax.set_yticks([200, 500, 700, 850, 1000])
+        if ncol > 0: ax.set_yticklabels([])
+        ax.set_xlim([-90, 90])
+        ax.set_ylim(ax.get_ylim()[::-1])
+
+        subplot_name = f'{subconfig_name.split(':')[1]}, CTL — SWISHE' if 'DIFF' in subconfig_name else f'{subconfig_name.split(':')[1]}, CTL'
+        subplot_annotation = f'({visualization.get_alphabet_letter(index)}) {subplot_name}'
+        ax.annotate(subplot_annotation, xy=(0.02, 0.95), xycoords='axes fraction', ha='left', va='top', fontsize=9)
 
     fig.tight_layout()
 
-    # Generate custom legend
-    handles = [matplotlib.lines.Line2D([0], [0], color=im.colors, lw=2) for im in ims.values()]
-    labels = [config_name for config_name in ims.keys()]
-    ax.legend(handles=handles, labels=labels, loc='upper left', frameon=False, fontsize=9)
+    # Plot labeling
+    fig.supxlabel('Latitude [deg N]', y=-0.03, fontsize=11)
+    fig.supylabel('Pressure level [hPa]', x=-0.03, fontsize=11)
