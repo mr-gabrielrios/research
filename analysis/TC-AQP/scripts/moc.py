@@ -11,6 +11,42 @@ import matplotlib, matplotlib.pyplot as plt
 sys.path.insert(1, '/projects/GEOCLIM/gr7610/scripts')
 import derived, utilities, visualization, track_TCs, zonal_mean
 
+def get_ITCZ_latitude(dataset: xr.DataArray,
+                      calculation_method: str) -> float:
+
+    # Perform data type checking
+    assert isinstance(dataset, xr.core.dataarray.DataArray), f'Input dataset must be an xarray DataArray.'
+
+    # Perform method type checking
+    calculation_methods = ['ceppi2013']
+    assert calculation_method in calculation_methods, f'ITCZ calculation method must be specified as one of the following: {calculation_methods}'
+
+    # Initialize output dictionary to avoid errors
+    ITCZ_latitudes = {key: np.nan for key in ['min', 'mean', 'max']}
+
+    if calculation_method == 'ceppi2013':
+        # Vertically averaged meridional streamfunction with mass weighting between 700 and 300 hPa
+        # per https://doi.org/10.1002/jgrd.50461 and https://doi.org/10.1007/s40641-018-0110-5 
+
+        # Check dimensions
+        calculation_dimensions = ['pfull', 'grid_yt', 'time']
+        assert sum([dim in calculation_dimensions for dim in dataset.dims]) == len(calculation_dimensions), 'Pressure levels (pfull) and latitude (grid_yt) must be dimensions in the input dataset.'
+        averaging_dimensions = [dim for dim in dataset.dims if dim not in ['grid_yt', 'time']] # get dimensions to average over
+    
+        latitude_bound = 25 # degrees latitude below which a streamfunction minimum should be searched over
+        TMP = dataset.sel(pfull=slice(300, 700)).mean(averaging_dimensions) # subselect pressure level subsection
+        
+        # Index of minimum absolute value within prescribed latitude bounds
+        index_min_psi = abs(TMP.where(abs(TMP['grid_yt']) < latitude_bound)).argmin(dim='grid_yt')
+        # Perform operations before reducing along the time axis
+        ITCZ_latitude = TMP.isel(grid_yt=index_min_psi).grid_yt # get ITCZ latitude approximation
+        # Assign values
+        ITCZ_latitudes['min'] = np.round(ITCZ_latitude.quantile(0.25, dim='time').item(), decimals=2)
+        ITCZ_latitudes['mean'] = np.round(ITCZ_latitude.mean(dim='time').item(), decimals=2) 
+        ITCZ_latitudes['max'] = np.round(ITCZ_latitude.quantile(0.75, dim='time').item(), decimals=2)
+
+    return ITCZ_latitudes
+
 def generate_field_plot_data(data,
                              field_name,
                              averaging_dimensions: str | list[str],
@@ -106,6 +142,7 @@ def multiplot_overturning_circulation(data: dict,
                                       configuration_names: dict[list[str]],
                                       psi_magnitudes: dict[str: int|float],
                                       colormap_name: str='viridis',
+                                      savefig: bool=False,
                                       diagnostic: bool=False):
 
     diagnostic_tag = f'[multiplot_overturning_circulation()]'
@@ -120,10 +157,9 @@ def multiplot_overturning_circulation(data: dict,
     ncols = 2
     nrows = np.ceil(len(configuration_names) / ncols).astype(int)
     ax_width, ax_height = 4, 2
-    dpi = 144
+    dpi = 300 if savefig else 144
     fig, gs = [plt.figure(figsize=(ax_width * ncols, ax_height * nrows), dpi=dpi),
                matplotlib.gridspec.GridSpec(nrows=nrows, ncols=ncols)]
-
 
     # Iterate over the selected configurations
     for index, config_name in enumerate(configuration_names):
@@ -204,8 +240,20 @@ def multiplot_overturning_circulation(data: dict,
         subplot_annotation = f'({visualization.get_alphabet_letter(index)}) {subplot_name}'
         ax.annotate(subplot_annotation, xy=(0.02, 0.95), xycoords='axes fraction', ha='left', va='top', fontsize=9)
 
+        # Ensure axis spines stay on top
+        for k, spine in ax.spines.items(): spine.set_zorder(100)
+
     fig.tight_layout()
 
     # Plot labeling
     fig.supxlabel('Latitude [deg N]', y=-0.03, fontsize=11)
     fig.supylabel('Pressure level [hPa]', x=-0.03, fontsize=11)
+
+    if savefig:
+        storage_dirname = '/projects/GEOCLIM/gr7610/analysis/TC-AQP/figs'
+        figure_identifier = 'GCM'
+        figure_config_names = sorted(list(set([name.split(':')[1] for name in configuration_names])))
+        filename = f'{figure_identifier}.configuration_names.{'-'.join(figure_config_names)}.field_name.MOC-{psi_magnitudes['CTL']}-{psi_magnitudes['DIFF']}.pdf'
+
+        storage_pathname = os.path.join(storage_dirname, filename)
+        plt.savefig(storage_pathname, transparent=True, dpi=dpi, format='pdf', bbox_inches='tight')
