@@ -8,6 +8,25 @@ import xarray as xr
 sys.path.insert(1, '/projects/GEOCLIM/gr7610/scripts')
 import visualization
 
+def assign_unique_dim(TMP_QUANTITY: xr.Dataset) -> xr.Dataset:
+
+    ''' 
+    Function that creates new dimension that addresses the issue of duplicate storm IDs by assigning a center latitude to it,
+    rendering a high chance of a unique ID.
+    '''
+
+    TMP_MOD = [] # container list
+    # Iterate over all instances of the TC
+    for TMP in TMP_QUANTITY:
+        # Join storm ID values and center latitude values into a string
+        IDs = [f'{TMP.isel(storm_id=index)['storm_id'].item()}:{TMP.isel(storm_id=index)['center_lat'].item()}' 
+               for index in range(0, len(TMP['storm_id']))]
+        # Create coordinates and swap with storm_id
+        TMP = TMP.assign_coords({"TC_ID": ('storm_id', IDs)})
+        TMP_MOD.append(TMP.swap_dims({'storm_id': 'TC_ID'}).drop_duplicates(dim='TC_ID'))
+
+    return xr.merge(TMP_MOD, compat='override')
+
 def get_composite_latitude_distribution(configuration_data: dict,
                                         maximum_latitude: int=90,
                                         savefig: bool=False):
@@ -131,9 +150,13 @@ def plot_TC_GCM_composite(entries_TC: xr.Dataset,
                           gs: matplotlib.gridspec.GridSpec|None=None,
                           ax_index: int|None=None):
 
+    assert 'storm_id' in entries_TC.dims or 'TC_ID' in entries_TC.dims
+    assert 'storm_id' in entries_GCM.dims or 'TC_ID' in entries_GCM.dims
+    dimension_ID = 'storm_id' if 'storm_id' in entries_TC.dims else 'TC_ID'
+
     # Filter entries by latitude
-    TMP_TC, TMP_GCM = [entries_TC.where(abs(entries_TC['center_lat']) < maximum_latitude).dropna(dim='storm_id'),
-                       entries_GCM.where(abs(entries_GCM['center_lat']) < maximum_latitude).dropna(dim='storm_id')]
+    TMP_TC, TMP_GCM = [entries_TC.where(abs(entries_TC['center_lat']) < maximum_latitude).dropna(dim=dimension_ID),
+                       entries_GCM.where(abs(entries_GCM['center_lat']) < maximum_latitude).dropna(dim=dimension_ID)]
 
     # Build configuration dictionary data structure
     configs = {'TC': TMP_TC[field_name],
@@ -159,11 +182,11 @@ def plot_TC_GCM_composite(entries_TC: xr.Dataset,
         # Assign a temporary alias for the configuration value
         value = configs[config_key]
         # Get a TC-averaged value (i.e., TC composite)
-        config_means[config_key] = value.mean(['storm_id', 'grid_yt'])
+        config_means[config_key] = value.mean([dimension_ID, 'grid_yt'])
         # Store extrema
         config_extrema[config_key] = {'min': config_means[config_key].min().item(), 
                                       'max': config_means[config_key].max().item(), 
-                                      'count': value['storm_id'].count().item()}
+                                      'count': value[dimension_ID].count().item()}
     
     # Define normalization parameters for raw experiment values
     experiment_norm, experiment_cmap = visualization.norm_cmap([], 
